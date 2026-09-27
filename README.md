@@ -1,13 +1,14 @@
 # Crypto Boom: public hourly altcoin status
 
 <!-- HOURLY_ALERT_STATUS_START -->
-**Last complete scan:** 2026-09-27T15:00:00+00:00 (UTC hour close).  
-**New conditions:** 2; evaluated 483 / eligible 487; unavailable history 4.
+**Last complete scan:** 2026-09-27T19:00:00+00:00 (UTC hour close).  
+**New conditions:** 3; evaluated 483 / eligible 487; unavailable history 4.
 
 | Stage | Pair | Turnover (USDT) | Ratio | Z-score | EMA premium | Net taker (USDT) |
 | --- | --- | ---: | ---: | ---: | ---: | ---: |
-| WATCH | AUSDT | 195,394 | 8.6 | 9.3 | +0.2% | 37,165 |
-| WATCH | PUMPUSDT | 5,432,596 | 4.7 | 5.5 | +7.3% | 68,924 |
+| WATCH | FIDAUSDT | 125,191 | 5.1 | 4.4 | +2.3% | 12,507 |
+| WATCH | GRTUSDT | 370,568 | 4.1 | 4.1 | +9.8% | 58,406 |
+| WATCH | ZKUSDT | 349,104 | 3.4 | 3.3 | +3.0% | 116,506 |
 
 Attention filter only; not a return forecast or buy recommendation.
 <!-- HOURLY_ALERT_STATUS_END -->
