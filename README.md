@@ -1,7 +1,15 @@
 # Crypto Boom: public hourly altcoin status
 
 <!-- HOURLY_ALERT_STATUS_START -->
-No completed public scan has been published. A missing or stale timestamp is not a no-signal result.
+**Last complete scan:** 2026-09-27T15:00:00+00:00 (UTC hour close).  
+**New conditions:** 2; evaluated 483 / eligible 487; unavailable history 4.
+
+| Stage | Pair | Turnover (USDT) | Ratio | Z-score | EMA premium | Net taker (USDT) |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| WATCH | AUSDT | 195,394 | 8.6 | 9.3 | +0.2% | 37,165 |
+| WATCH | PUMPUSDT | 5,432,596 | 4.7 | 5.5 | +7.3% | 68,924 |
+
+Attention filter only; not a return forecast or buy recommendation.
 <!-- HOURLY_ALERT_STATUS_END -->
 
 This is a free, read-only **attention filter** for unusual Binance Spot altcoin activity. It does not predict a 20% or 30% rise, recommend an entry, place an order, or establish profitability. The public status is updated after a successful hourly scan; a failed or missed scan leaves its timestamp stale. A README update is **not** a guaranteed push notification.
