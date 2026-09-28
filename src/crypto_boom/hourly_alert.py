@@ -31,6 +31,17 @@ API_BASE = "https://data-api.binance.vision"
 GITHUB_API_BASE = "https://api.github.com"
 README_START = "<!-- HOURLY_ALERT_STATUS_START -->"
 README_END = "<!-- HOURLY_ALERT_STATUS_END -->"
+RECEIPT_TAG = "HOURLY_ALERT_RECEIPT_V1"
+RECEIPT_KEYS = (
+    "bar_close_utc",
+    "binance_server_time_utc",
+    "scan_started_utc",
+    "scan_completed_utc",
+    "eligible_symbols",
+    "evaluated_symbols",
+    "unavailable_history_symbols",
+    "signals",
+)
 MAX_SYMBOLS = 1000
 MAX_RESPONSE_BYTES = 2_000_000
 MAX_EXCHANGE_INFO_BYTES = 32 * 1024 * 1024
@@ -226,6 +237,7 @@ class RequestPacer:
 
 
 def scan() -> dict[str, object]:
+    started_utc = datetime.now(UTC).isoformat()
     server = _get_json("/api/v3/time")
     if not isinstance(server, dict) or not isinstance(server.get("serverTime"), int):
         raise ValueError("Invalid Binance server time")
@@ -268,6 +280,11 @@ def scan() -> dict[str, object]:
         "bar_close_utc": datetime.fromtimestamp(
             (expected_open_ms + HOUR_MS) / 1000, tz=UTC
         ).isoformat(),
+        "binance_server_time_utc": datetime.fromtimestamp(
+            server_ms / 1000, tz=UTC
+        ).isoformat(),
+        "scan_started_utc": started_utc,
+        "scan_completed_utc": datetime.now(UTC).isoformat(),
         "eligible_symbols": len(symbols),
         "evaluated_symbols": evaluated,
         "unavailable_history_symbols": len(symbols) - evaluated,
@@ -303,7 +320,18 @@ def format_readme_status(report: dict[str, object]) -> str:
             lines.append(f"\n{len(signals) - 20} more matches are in the run log.")
     else:
         lines.append("\nNo new WATCH or CONFIRMED condition in this scan.")
-    lines.append("\nAttention filter only; not a return forecast or buy recommendation.")
+    lines.append(
+        "\nAttention filter only; not a return forecast or buy recommendation."
+    )
+    public_fields = {key: report[key] for key in RECEIPT_KEYS if key in report}
+    receipt = json.dumps(
+        {"schema_version": 1, **public_fields},
+        allow_nan=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    encoded = base64.urlsafe_b64encode(receipt.encode("utf-8")).decode("ascii")
+    lines.append(f"<!-- {RECEIPT_TAG}:{encoded} -->")
     return "\n".join(lines)
 
 
@@ -327,7 +355,9 @@ def _github_json(method: str, path: str, payload: dict | None = None) -> Any:
         with urllib.request.urlopen(request, timeout=12) as response:
             raw = response.read(MAX_RESPONSE_BYTES + 1)
     except urllib.error.HTTPError as exc:
-        raise RuntimeError(f"GitHub Contents HTTP {exc.code}; token not logged") from None
+        raise RuntimeError(
+            f"GitHub Contents HTTP {exc.code}; token not logged"
+        ) from None
     except urllib.error.URLError:
         raise RuntimeError("GitHub Contents request failed; token not logged") from None
     if len(raw) > MAX_RESPONSE_BYTES:
@@ -354,7 +384,9 @@ def status_commit_message(report: dict[str, object]) -> str:
     prefix = f"ALTCOIN ALERT {timestamp}"
     names = [f"{signal['stage']}:{signal['symbol']}" for signal in signals[:5]]
     while names:
-        suffix = f" +{len(signals) - len(names)} more" if len(signals) > len(names) else ""
+        suffix = (
+            f" +{len(signals) - len(names)} more" if len(signals) > len(names) else ""
+        )
         if len(prefix) + 1 + len(" ".join(names)) + len(suffix) <= 120:
             break
         names.pop()
@@ -371,9 +403,11 @@ def publish_readme(report: dict[str, object]) -> str:
         raise RuntimeError("GITHUB_REF_NAME is not a valid branch")
     path = f"/repos/{repository}/contents/README.md"
     current = _github_json("GET", path + "?ref=" + urllib.parse.quote(branch, safe=""))
-    if not isinstance(current, dict) or not all(
-        isinstance(current.get(key), str) for key in ("sha", "content")
-    ) or current.get("encoding") != "base64":
+    if (
+        not isinstance(current, dict)
+        or not all(isinstance(current.get(key), str) for key in ("sha", "content"))
+        or current.get("encoding") != "base64"
+    ):
         raise ValueError("Invalid GitHub README response")
     try:
         readme = base64.b64decode(
@@ -402,7 +436,9 @@ def publish_readme(report: dict[str, object]) -> str:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "--publish-readme", action="store_true", help="Publish the scan in public README"
+        "--publish-readme",
+        action="store_true",
+        help="Publish the scan in public README",
     )
     args = parser.parse_args()
     if args.publish_readme and not (

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import base64
 import json
+import re
+from datetime import datetime
 from typing import cast
 
 import pytest
@@ -158,6 +160,9 @@ def test_scan_and_readme_status_without_external_network(
 
     monkeypatch.setattr(alert, "_get_json", fake_get)
     report = alert.scan()
+    assert datetime.fromisoformat(
+        str(report["scan_started_utc"])
+    ) <= datetime.fromisoformat(str(report["scan_completed_utc"]))
     assert report["eligible_symbols"] == 1
     assert report["evaluated_symbols"] == 1
     assert report["unavailable_history_symbols"] == 0
@@ -172,18 +177,29 @@ def test_scan_and_readme_status_without_external_network(
 
 
 def test_readme_status_replaces_only_the_bounded_region() -> None:
-    old = "# Heading\n" + alert.README_START + "\nold\n" + alert.README_END + "\nfooter\n"
+    old = (
+        "# Heading\n" + alert.README_START + "\nold\n" + alert.README_END + "\nfooter\n"
+    )
     report: dict[str, object] = {
         "bar_close_utc": "2026-09-27T15:00:00+00:00",
         "eligible_symbols": 1,
         "evaluated_symbols": 1,
         "unavailable_history_symbols": 0,
         "signals": [],
+        "private_debug": "do-not-publish",
     }
     updated = alert.replace_readme_status(old, report)
     assert updated.startswith("# Heading\n" + alert.README_START)
     assert updated.endswith(alert.README_END + "\nfooter\n")
     assert "No new WATCH or CONFIRMED" in updated
+    encoded = re.search(r"<!-- HOURLY_ALERT_RECEIPT_V1:([A-Za-z0-9_=-]+) -->", updated)
+    assert encoded is not None
+    receipt = json.loads(base64.urlsafe_b64decode(encoded[1]).decode())
+    assert receipt == {
+        "schema_version": 1,
+        **{key: value for key, value in report.items() if key != "private_debug"},
+    }
+    assert "do-not-publish" not in updated
     with pytest.raises(ValueError, match="markers"):
         alert.replace_readme_status("# No status", report)
     assert (
@@ -207,6 +223,30 @@ def test_commit_subject_names_ranked_matches_and_bounds_length() -> None:
     assert "WATCH:X3USDT +2 more" in title
     assert "X4USDT" not in title
     assert len(title) <= 120
+
+
+def test_full_ranked_receipt_survives_the_visible_twenty_row_limit() -> None:
+    signal = {
+        "stage": "WATCH",
+        "quote_volume_usdt": 100_000.0,
+        "volume_ratio": 3.0,
+        "volume_zscore": 3.0,
+        "ema_premium": 0.01,
+        "net_taker_quote_usdt": 1.0,
+    }
+    report: dict[str, object] = {
+        "bar_close_utc": "2026-09-27T15:00:00+00:00",
+        "eligible_symbols": 21,
+        "evaluated_symbols": 21,
+        "unavailable_history_symbols": 0,
+        "signals": [{"symbol": f"X{i}USDT", **signal} for i in range(21)],
+    }
+    status = alert.format_readme_status(report)
+    encoded = re.search(r"<!-- HOURLY_ALERT_RECEIPT_V1:([A-Za-z0-9_=-]+) -->", status)
+    assert encoded is not None
+    receipt = json.loads(base64.urlsafe_b64decode(encoded[1]))
+    assert len(receipt["signals"]) == 21
+    assert status.count("| WATCH |") == 20
 
 
 def test_github_readme_publication_without_external_effect(
