@@ -1,10 +1,14 @@
 # Crypto Boom: public hourly altcoin status
 
 <!-- HOURLY_ALERT_STATUS_START -->
-**Last complete scan:** 2026-09-28T02:00:00+00:00 (UTC hour close).  
-**New conditions:** 0; evaluated 483 / eligible 487; unavailable history 4.
+**Last complete scan:** 2026-09-28T08:00:00+00:00 (UTC hour close).  
+**New conditions:** 3; evaluated 483 / eligible 487; unavailable history 4.
 
-No new WATCH or CONFIRMED condition in this scan.
+| Stage | Pair | Turnover (USDT) | Ratio | Z-score | EMA premium | Net taker (USDT) |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| WATCH | JUVUSDT | 922,622 | 38.7 | 8.2 | +5.8% | 33,877 |
+| WATCH | ACMUSDT | 212,452 | 14.8 | 6.1 | +2.5% | 16,844 |
+| WATCH | BARUSDT | 137,962 | 11.1 | 9.5 | +2.9% | 33,755 |
 
 Attention filter only; not a return forecast or buy recommendation.
 <!-- HOURLY_ALERT_STATUS_END -->
