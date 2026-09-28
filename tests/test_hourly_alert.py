@@ -186,6 +186,27 @@ def test_readme_status_replaces_only_the_bounded_region() -> None:
     assert "No new WATCH or CONFIRMED" in updated
     with pytest.raises(ValueError, match="markers"):
         alert.replace_readme_status("# No status", report)
+    assert (
+        alert.status_commit_message(report)
+        == "NO NEW ALTCOIN SIGNALS 2026-09-27 15:00 UTC"
+    )
+
+
+def test_commit_subject_names_ranked_matches_and_bounds_length() -> None:
+    report: dict[str, object] = {
+        "bar_close_utc": "2026-09-27T15:00:00+00:00",
+        "signals": [
+            {"stage": "CONFIRMED", "symbol": "FIRSTUSDT"},
+            *({"stage": "WATCH", "symbol": f"X{index}USDT"} for index in range(6)),
+        ],
+    }
+    title = alert.status_commit_message(report)
+    assert title.startswith(
+        "ALTCOIN ALERT 2026-09-27 15:00 UTC CONFIRMED:FIRSTUSDT WATCH:X0USDT"
+    )
+    assert "WATCH:X3USDT +2 more" in title
+    assert "X4USDT" not in title
+    assert len(title) <= 120
 
 
 def test_github_readme_publication_without_external_effect(
@@ -222,6 +243,7 @@ def test_github_readme_publication_without_external_effect(
     assert calls[0][1].endswith("/contents/README.md?ref=main")
     assert calls[1][2] is not None
     assert calls[1][2]["sha"] == "prior-sha"
+    assert calls[1][2]["message"] == "NO NEW ALTCOIN SIGNALS 2026-09-27 15:00 UTC"
     published = base64.b64decode(calls[1][2]["content"]).decode()
     assert "No new WATCH or CONFIRMED" in published
     assert published.endswith(alert.README_END + "\n")

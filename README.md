@@ -20,6 +20,8 @@ Attention filter only; not a return forecast or buy recommendation.
 
 This is a free, read-only **attention filter** for unusual Binance Spot altcoin activity. It does not predict a 20% or 30% rise, recommend an entry, place an order, or establish profitability. The public status is updated after a successful hourly scan; a failed or missed scan leaves its timestamp stale. A README update is **not** a guaranteed push notification.
 
+If the repository administrator enables GitHub push-email notifications, each successful status commit now names up to five top-ranked `STAGE:SYMBOL` matches in its subject, followed by `+N more` when needed. No-match commits explicitly say `NO NEW ALTCOIN SIGNALS`. This lets an email reader see the leading pairs without opening the diff; the full status still lives above. GitHub delivery, scheduling, and email-client truncation are not guaranteed.
+
 ## Which pairs are scanned?
 
 Each run reads Binance's current exchange metadata and considers pairs that are `TRADING`, Spot-enabled, quoted in USDT, and have an ASCII alphanumeric symbol. BTC, ETH, BNB, and an explicit stable/fiat base-asset list are excluded. This is a current eligible pool, not a historical census. The scanner refuses a pool above 1,000 pairs rather than silently truncating it. A pair without 170 contiguous, completed hourly bars is counted as unavailable, not as a negative signal.

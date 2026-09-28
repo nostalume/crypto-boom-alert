@@ -345,6 +345,23 @@ def replace_readme_status(readme: str, report: dict[str, object]) -> str:
     return readme[:start] + "\n" + format_readme_status(report) + "\n" + readme[end:]
 
 
+def status_commit_message(report: dict[str, object]) -> str:
+    signals = report["signals"]
+    assert isinstance(signals, list)
+    timestamp = str(report["bar_close_utc"]).replace("T", " ")[:16] + " UTC"
+    if not signals:
+        return f"NO NEW ALTCOIN SIGNALS {timestamp}"
+    prefix = f"ALTCOIN ALERT {timestamp}"
+    names = [f"{signal['stage']}:{signal['symbol']}" for signal in signals[:5]]
+    while names:
+        suffix = f" +{len(signals) - len(names)} more" if len(signals) > len(names) else ""
+        if len(prefix) + 1 + len(" ".join(names)) + len(suffix) <= 120:
+            break
+        names.pop()
+    suffix = f" +{len(signals) - len(names)} more" if len(signals) > len(names) else ""
+    return f"{prefix} {' '.join(names)}{suffix}"
+
+
 def publish_readme(report: dict[str, object]) -> str:
     repository = os.environ.get("GITHUB_REPOSITORY", "")
     if not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repository):
@@ -371,7 +388,7 @@ def publish_readme(report: dict[str, object]) -> str:
         "PUT",
         path,
         {
-            "message": f"Update public altcoin status at {report['bar_close_utc']}",
+            "message": status_commit_message(report),
             "content": base64.b64encode(updated.encode("utf-8")).decode("ascii"),
             "sha": current["sha"],
             "branch": branch,
