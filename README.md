@@ -1,19 +1,10 @@
 # Crypto Boom: public hourly altcoin status
 
 <!-- HOURLY_ALERT_STATUS_START -->
-**Last complete scan:** 2026-09-28T01:00:00+00:00 (UTC hour close).  
-**New conditions:** 8; evaluated 483 / eligible 487; unavailable history 4.
+**Last complete scan:** 2026-09-28T02:00:00+00:00 (UTC hour close).  
+**New conditions:** 0; evaluated 483 / eligible 487; unavailable history 4.
 
-| Stage | Pair | Turnover (USDT) | Ratio | Z-score | EMA premium | Net taker (USDT) |
-| --- | --- | ---: | ---: | ---: | ---: | ---: |
-| WATCH | EULUSDT | 1,165,073 | 23.9 | 10.3 | +0.0% | 319,660 |
-| WATCH | LAYERUSDT | 334,930 | 17.4 | 16.8 | +1.0% | 103,007 |
-| WATCH | AXLUSDT | 743,980 | 15.6 | 11.1 | +0.1% | 103,582 |
-| WATCH | QNTUSDT | 20,890,757 | 13.2 | 4.2 | +34.0% | 489,675 |
-| WATCH | NMRUSDT | 312,336 | 11.3 | 5.5 | +5.3% | 32,015 |
-| WATCH | MBLUSDT | 130,766 | 10.7 | 15.0 | +0.9% | 23,496 |
-| WATCH | SEIUSDT | 4,183,783 | 6.9 | 6.6 | +11.1% | 409,482 |
-| WATCH | IOTAUSDT | 135,478 | 3.2 | 3.2 | +2.4% | 6,956 |
+No new WATCH or CONFIRMED condition in this scan.
 
 Attention filter only; not a return forecast or buy recommendation.
 <!-- HOURLY_ALERT_STATUS_END -->
