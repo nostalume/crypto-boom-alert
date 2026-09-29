@@ -1,13 +1,15 @@
 # Crypto Boom: public hourly altcoin status
 
 <!-- HOURLY_ALERT_STATUS_START -->
-**Last complete scan:** 2026-09-28T23:00:00+00:00 (UTC hour close).  
-**New conditions:** 0; evaluated 483 / eligible 487; unavailable history 4.
+**Last complete scan:** 2026-09-29T05:00:00+00:00 (UTC hour close).  
+**New conditions:** 1; evaluated 483 / eligible 487; unavailable history 4.
 
-No new WATCH or CONFIRMED condition in this scan.
+| Stage | Pair | Turnover (USDT) | Ratio | Z-score | EMA premium | Net taker (USDT) |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| WATCH | NIGHTUSDT | 314,645 | 3.9 | 3.2 | +2.1% | 123,451 |
 
 Attention filter only; not a return forecast or buy recommendation.
-<!-- HOURLY_ALERT_RECEIPT_V1:eyJiYXJfY2xvc2VfdXRjIjoiMjAyNi0wOS0yOFQyMzowMDowMCswMDowMCIsImJpbmFuY2Vfc2VydmVyX3RpbWVfdXRjIjoiMjAyNi0wOS0yOFQyMzoxMjowMC41NjYwMDArMDA6MDAiLCJlbGlnaWJsZV9zeW1ib2xzIjo0ODcsImV2YWx1YXRlZF9zeW1ib2xzIjo0ODMsInNjYW5fY29tcGxldGVkX3V0YyI6IjIwMjYtMDktMjhUMjM6MTM6MDUuMDkwMDkwKzAwOjAwIiwic2Nhbl9zdGFydGVkX3V0YyI6IjIwMjYtMDktMjhUMjM6MTI6MDAuMDEzMDc4KzAwOjAwIiwic2NoZW1hX3ZlcnNpb24iOjEsInNpZ25hbHMiOltdLCJ1bmF2YWlsYWJsZV9oaXN0b3J5X3N5bWJvbHMiOjR9 -->
+<!-- HOURLY_ALERT_RECEIPT_V1:eyJiYXJfY2xvc2VfdXRjIjoiMjAyNi0wOS0yOVQwNTowMDowMCswMDowMCIsImJpbmFuY2Vfc2VydmVyX3RpbWVfdXRjIjoiMjAyNi0wOS0yOVQwNTozNDoyOS42NTUwMDArMDA6MDAiLCJlbGlnaWJsZV9zeW1ib2xzIjo0ODcsImV2YWx1YXRlZF9zeW1ib2xzIjo0ODMsInNjYW5fY29tcGxldGVkX3V0YyI6IjIwMjYtMDktMjlUMDU6MzU6MzMuMzM1NDE0KzAwOjAwIiwic2Nhbl9zdGFydGVkX3V0YyI6IjIwMjYtMDktMjlUMDU6MzQ6MjkuMDMyMjIyKzAwOjAwIiwic2NoZW1hX3ZlcnNpb24iOjEsInNpZ25hbHMiOlt7ImJhcl9vcGVuX21zIjoxNzkwNjU0NDAwMDAwLCJlbWFfcHJlbWl1bSI6MC4wMjA5OTcxNDQwNzY1NDcyOSwibmV0X3Rha2VyX3F1b3RlX3VzZHQiOjEyMzQ1MS4zOTc3NjAwMDAwMiwicXVvdGVfdm9sdW1lX3VzZHQiOjMxNDY0NS40NjQ0Niwic3RhZ2UiOiJXQVRDSCIsInN5bWJvbCI6Ik5JR0hUVVNEVCIsInZvbHVtZV9yYXRpbyI6My44Njc5MjE2MTYxNjE3Miwidm9sdW1lX3pzY29yZSI6My4xNTA1MjY3NTQwNTgwMzN9XSwidW5hdmFpbGFibGVfaGlzdG9yeV9zeW1ib2xzIjo0fQ== -->
 <!-- HOURLY_ALERT_STATUS_END -->
 
 This is a free, read-only **attention filter** for unusual Binance Spot altcoin activity. It does not predict a 20% or 30% rise, recommend an entry, place an order, or establish profitability. The public status is updated after a successful hourly scan; a failed or missed scan leaves its timestamp stale. A README update is **not** a guaranteed push notification.
