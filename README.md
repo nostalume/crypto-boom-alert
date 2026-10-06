@@ -1,17 +1,15 @@
 # Crypto Boom: public hourly altcoin status
 
 <!-- HOURLY_ALERT_STATUS_START -->
-**Last complete scan:** 2026-10-05T18:00:00+00:00 (UTC hour close).  
-**New conditions:** 3; evaluated 487 / eligible 494; unavailable history 7.
+**Last complete scan:** 2026-10-06T00:00:00+00:00 (UTC hour close).  
+**New conditions:** 1; evaluated 487 / eligible 494; unavailable history 7.
 
 | Stage | Pair | Turnover (USDT) | Ratio | Z-score | EMA premium | Net taker (USDT) |
 | --- | --- | ---: | ---: | ---: | ---: | ---: |
-| WATCH | AVNTUSDT | 793,776 | 27.2 | 25.5 | +3.0% | 119,852 |
-| WATCH | RLCUSDT | 2,535,884 | 26.1 | 5.5 | +41.3% | 194,750 |
-| WATCH | NILUSDT | 1,708,546 | 7.9 | 5.5 | +15.3% | 97,118 |
+| WATCH | ARBUSDT | 3,066,633 | 4.7 | 4.9 | +1.0% | 39,807 |
 
 Attention filter only; not a return forecast or buy recommendation.
-<!-- HOURLY_ALERT_RECEIPT_V1:eyJiYXJfY2xvc2VfdXRjIjoiMjAyNi0xMC0wNVQxODowMDowMCswMDowMCIsImJpbmFuY2Vfc2VydmVyX3RpbWVfdXRjIjoiMjAyNi0xMC0wNVQxODoxODo0NS4zMTUwMDArMDA6MDAiLCJlbGlnaWJsZV9zeW1ib2xzIjo0OTQsImV2YWx1YXRlZF9zeW1ib2xzIjo0ODcsInNjYW5fY29tcGxldGVkX3V0YyI6IjIwMjYtMTAtMDVUMTg6MTk6NDkuODY4MzkyKzAwOjAwIiwic2Nhbl9zdGFydGVkX3V0YyI6IjIwMjYtMTAtMDVUMTg6MTg6NDQuOTEzOTc2KzAwOjAwIiwic2NoZW1hX3ZlcnNpb24iOjEsInNpZ25hbHMiOlt7ImJhcl9vcGVuX21zIjoxNzkxMjE5NjAwMDAwLCJlbWFfcHJlbWl1bSI6MC4wMzAyOTEwNDA1MjAyMTQzNjMsIm5ldF90YWtlcl9xdW90ZV91c2R0IjoxMTk4NTIuMDI2MjIsInF1b3RlX3ZvbHVtZV91c2R0Ijo3OTM3NzYuMDgzOTYsInN0YWdlIjoiV0FUQ0giLCJzeW1ib2wiOiJBVk5UVVNEVCIsInZvbHVtZV9yYXRpbyI6MjcuMjAyNzAwMDcyMTcwOTQ1LCJ2b2x1bWVfenNjb3JlIjoyNS41MTU3OTcxNzAyNDkzMzJ9LHsiYmFyX29wZW5fbXMiOjE3OTEyMTk2MDAwMDAsImVtYV9wcmVtaXVtIjowLjQxMzIyNTUzMjc3NzYyLCJuZXRfdGFrZXJfcXVvdGVfdXNkdCI6MTk0NzUwLjA3OTczOTk5OTk2LCJxdW90ZV92b2x1bWVfdXNkdCI6MjUzNTg4My44OTg0OCwic3RhZ2UiOiJXQVRDSCIsInN5bWJvbCI6IlJMQ1VTRFQiLCJ2b2x1bWVfcmF0aW8iOjI2LjExMDA3MTI3NjU4MjUyLCJ2b2x1bWVfenNjb3JlIjo1LjQ2OTEzNjMwNDE2NTMyN30seyJiYXJfb3Blbl9tcyI6MTc5MTIxOTYwMDAwMCwiZW1hX3ByZW1pdW0iOjAuMTUyOTU0Mzg1Njg0NDAyNDUsIm5ldF90YWtlcl9xdW90ZV91c2R0Ijo5NzExNy44MDI0NTAwMDAwOCwicXVvdGVfdm9sdW1lX3VzZHQiOjE3MDg1NDYuMzcwMzQ4LCJzdGFnZSI6IldBVENIIiwic3ltYm9sIjoiTklMVVNEVCIsInZvbHVtZV9yYXRpbyI6Ny44ODUxNzQwNjExMTIwOTEsInZvbHVtZV96c2NvcmUiOjUuNDY4MTk2NDUxODUwMzZ9XSwidW5hdmFpbGFibGVfaGlzdG9yeV9zeW1ib2xzIjo3fQ== -->
+<!-- HOURLY_ALERT_RECEIPT_V1:eyJiYXJfY2xvc2VfdXRjIjoiMjAyNi0xMC0wNlQwMDowMDowMCswMDowMCIsImJpbmFuY2Vfc2VydmVyX3RpbWVfdXRjIjoiMjAyNi0xMC0wNlQwMDo0NDozMi4zMDEwMDArMDA6MDAiLCJlbGlnaWJsZV9zeW1ib2xzIjo0OTQsImV2YWx1YXRlZF9zeW1ib2xzIjo0ODcsInNjYW5fY29tcGxldGVkX3V0YyI6IjIwMjYtMTAtMDZUMDA6NDU6MzguMTcwNTEwKzAwOjAwIiwic2Nhbl9zdGFydGVkX3V0YyI6IjIwMjYtMTAtMDZUMDA6NDQ6MzEuNzIyOTQ4KzAwOjAwIiwic2NoZW1hX3ZlcnNpb24iOjEsInNpZ25hbHMiOlt7ImJhcl9vcGVuX21zIjoxNzkxMjQxMjAwMDAwLCJlbWFfcHJlbWl1bSI6MC4wMDk1MjcxODI4NzIyMjQ3NiwibmV0X3Rha2VyX3F1b3RlX3VzZHQiOjM5ODA2LjY1NTA0OTk5OTcxLCJxdW90ZV92b2x1bWVfdXNkdCI6MzA2NjYzMi45NzEzMywic3RhZ2UiOiJXQVRDSCIsInN5bWJvbCI6IkFSQlVTRFQiLCJ2b2x1bWVfcmF0aW8iOjQuNjgyMzU2NTc5NDAzMjkxLCJ2b2x1bWVfenNjb3JlIjo0Ljg5MjMwNzAwOTkzNTQ4OTV9XSwidW5hdmFpbGFibGVfaGlzdG9yeV9zeW1ib2xzIjo3fQ== -->
 <!-- HOURLY_ALERT_STATUS_END -->
 
 This is a free, read-only **attention filter** for unusual Binance Spot altcoin activity. It does not predict a 20% or 30% rise, recommend an entry, place an order, or establish profitability. The public status is updated after a successful hourly scan; a failed or missed scan leaves its timestamp stale. A README update is **not** a guaranteed push notification.
