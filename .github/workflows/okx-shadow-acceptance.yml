@@ -14,7 +14,7 @@ concurrency:
 jobs:
   shadow:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 30
     env:
       PYTHONPATH: src
       PYTHONDONTWRITEBYTECODE: "1"
@@ -40,23 +40,23 @@ jobs:
         run: |
           python -m pytest -q -p no:cacheprovider --basetemp "$RUNNER_TEMP/okx-shadow-tests"
           python -m ruff check --no-cache --select F,I,RUF100 src tests
-      - name: Probe eight OKX products without publication
+      - name: Measure at most three full-pool shadow rounds
         shell: bash
         run: |
-          python -m crypto_boom.okx_scan --workspace "$RUNNER_TEMP/okx-shadow-scan" --limit 8 --workers 4 | tee "$RUNNER_TEMP/okx-shadow-report.txt"
+          python -m crypto_boom.okx_benchmark --workspace "$RUNNER_TEMP/okx-shadow-scan" --rounds 3 --limit 1000 --workers 4 | tee "$RUNNER_TEMP/okx-shadow-report.txt"
       - name: Record acceptance boundary
         if: always()
         shell: bash
         run: |
           {
             echo '### OKX shadow acceptance'
-            echo 'Tests establish software contracts; this eight-product cold probe is not full-pool or latency-p95 acceptance.'
+            echo 'At most three full-pool bounded observations; not latency-p95, 24-hour backlog or cross-run storage acceptance.'
             echo 'No alert publication, cache save, or artifact upload. State exists only on this ephemeral runner.'
-            if [[ -s "$RUNNER_TEMP/okx-shadow-report.txt" ]]; then
+            if [[ -s "$RUNNER_TEMP/okx-shadow-scan/benchmark-report.json" ]]; then
               echo '```json'
-              cat "$RUNNER_TEMP/okx-shadow-report.txt"
+              cat "$RUNNER_TEMP/okx-shadow-scan/benchmark-report.json"
               echo '```'
             else
-              echo 'No successful probe report; inspect the failed or skipped step.'
+              echo 'No benchmark report; inspect the failed or skipped step.'
             fi
           } >> "$GITHUB_STEP_SUMMARY"

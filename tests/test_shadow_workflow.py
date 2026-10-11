@@ -18,7 +18,7 @@ def test_shadow_is_manual_read_only_and_separate_from_production():
     assert value["concurrency"] == {"group": "okx-shadow-manual", "cancel-in-progress": False}
     assert set(value["jobs"]) == {"shadow"}
     job = value["jobs"]["shadow"]
-    assert job["runs-on"] == "ubuntu-latest" and job["timeout-minutes"] == 15
+    assert job["runs-on"] == "ubuntu-latest" and job["timeout-minutes"] == 30
     assert "permissions" not in job and "environment" not in job
     assert job["env"] == {"PYTHONPATH": "src", "PYTHONDONTWRITEBYTECODE": "1",
                           "UV_NO_CACHE": "1", "PIP_NO_CACHE_DIR": "1"}
@@ -43,7 +43,7 @@ def test_shadow_runs_canonical_checks_and_bounded_ephemeral_probe():
     assert 'python -m pytest -q -p no:cacheprovider --basetemp "$RUNNER_TEMP/okx-shadow-tests"' in steps[1]["run"]
     assert 'python -m ruff check --no-cache --select F,I,RUF100 src tests' in steps[1]["run"]
     assert steps[2]["run"].strip() == (
-        'python -m crypto_boom.okx_scan --workspace "$RUNNER_TEMP/okx-shadow-scan" '
-        '--limit 8 --workers 4 | tee "$RUNNER_TEMP/okx-shadow-report.txt"')
+        'python -m crypto_boom.okx_benchmark --workspace "$RUNNER_TEMP/okx-shadow-scan" '
+        '--rounds 3 --limit 1000 --workers 4 | tee "$RUNNER_TEMP/okx-shadow-report.txt"')
     assert steps[3]["if"] == "always()" and '>> "$GITHUB_STEP_SUMMARY"' in steps[3]["run"]
-    assert "No successful probe report" in steps[3]["run"]
+    assert "No benchmark report" in steps[3]["run"]
