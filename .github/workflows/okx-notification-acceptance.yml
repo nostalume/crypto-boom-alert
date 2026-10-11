@@ -1,0 +1,166 @@
+name: OKX notification TEST acceptance
+
+"on":
+  workflow_dispatch:
+    inputs:
+      scenario:
+        description: Synthetic TEST only; quiet creates no intent or cache
+        type: choice
+        options: [quiet, alert]
+        default: quiet
+      publish:
+        description: Explicitly publish one TEST commit to the pre-existing isolated branch
+        type: boolean
+        default: false
+
+permissions: {}
+concurrency:
+  group: okx-notification-test-acceptance
+  cancel-in-progress: false
+
+env:
+  PYTHONPATH: src
+  PYTHONDONTWRITEBYTECODE: "1"
+  PIP_NO_CACHE_DIR: "1"
+  UV_NO_CACHE: "1"
+  SCENARIO: ${{ inputs.scenario }}
+  PUBLISH_TEST: ${{ inputs.publish }}
+
+jobs:
+  prepare:
+    if: github.repository == 'nostalume/crypto-boom-alert' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      has_intent: ${{ steps.intent.outputs.has_intent }}
+      head: ${{ steps.intent.outputs.head }}
+      key: ${{ steps.intent.outputs.key }}
+      manifest: ${{ steps.intent.outputs.manifest }}
+      checkpoint: ${{ steps.intent.outputs.checkpoint }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: "3.12"
+      - name: Install pinned dependencies and verify offline contracts
+        shell: bash
+        run: |
+          python -m pip install --disable-pip-version-check --no-cache-dir uv==0.12.17
+          uv pip install --python "$(command -v python)" --no-cache -r requirements.txt -r requirements-dev.txt
+          python -m pytest -q -p no:cacheprovider --basetemp "$RUNNER_TEMP/okx-notification-tests"
+          python -m ruff check --no-cache --select F,I,RUF100 src tests
+      - name: Prepare bounded synthetic intent
+        id: intent
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          WORKROOT="$RUNNER_TEMP/okx-notification-acceptance"
+          mkdir "$WORKROOT"
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" > "$WORKROOT/current.json"
+          gh api "repos/$GITHUB_REPOSITORY/actions/cache/usage" > "$WORKROOT/usage.json"
+          gh api "repos/$GITHUB_REPOSITORY/actions/caches?key=okx-stage4-notify-v1-&per_page=100" > "$WORKROOT/caches.json"
+          case "$SCENARIO" in
+            quiet) ;;
+            alert)
+              gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/codex/okx-notification-test" > "$WORKROOT/target-ref.json"
+              head=$(jq -er '.object.sha' "$WORKROOT/target-ref.json")
+              [[ "$head" =~ ^[0-9a-f]{40}$ ]]
+              gh api "repos/$GITHUB_REPOSITORY/contents/README.md?ref=$head" > "$WORKROOT/target-readme.json"
+              ;;
+            *) exit 1 ;;
+          esac
+          python -m crypto_boom.okx_notify_acceptance prepare --root "$WORKROOT"
+      - name: Save intent explicitly
+        if: steps.intent.outputs.has_intent == 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0; same path in both jobs
+        with:
+          path: ${{ runner.temp }}/okx-notification-acceptance/transfer
+          key: ${{ steps.intent.outputs.key }}
+
+  consume:
+    needs: prepare
+    if: needs.prepare.outputs.has_intent == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      actions: read
+    env:
+      INTENT_MANIFEST: ${{ needs.prepare.outputs.manifest }}
+      INTENT_CHECKPOINT: ${{ needs.prepare.outputs.checkpoint }}
+      TARGET_HEAD: ${{ needs.prepare.outputs.head }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: "3.12"
+      - name: Install pinned runtime
+        shell: bash
+        run: |
+          WORKROOT="$RUNNER_TEMP/okx-notification-acceptance"
+          python -m pip install --disable-pip-version-check --no-cache-dir uv==0.12.17
+          uv pip install --python "$(command -v python)" --no-cache -r requirements.txt
+          mkdir "$WORKROOT"
+      - name: Restore exact intent on fresh runner
+        id: readback
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ${{ runner.temp }}/okx-notification-acceptance/transfer
+          key: ${{ needs.prepare.outputs.key }}
+          fail-on-cache-miss: true
+      - name: Verify readback then optionally publish once
+        id: publish
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CACHE_HIT: ${{ steps.readback.outputs.cache-hit }}
+        run: |
+          WORKROOT="$RUNNER_TEMP/okx-notification-acceptance"
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" > "$WORKROOT/current.json"
+          gh api "repos/$GITHUB_REPOSITORY/actions/cache/usage" > "$WORKROOT/usage.json"
+          gh api "repos/$GITHUB_REPOSITORY/actions/caches?key=okx-stage4-notify-v1-&per_page=100" > "$WORKROOT/caches.json"
+          gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/codex/okx-notification-test" > "$WORKROOT/target-ref.json"
+          [[ "$TARGET_HEAD" =~ ^[0-9a-f]{40}$ ]]
+          gh api "repos/$GITHUB_REPOSITORY/contents/README.md?ref=$TARGET_HEAD" > "$WORKROOT/target-readme.json"
+          python -m crypto_boom.okx_notify_acceptance consume --root "$WORKROOT"
+      - name: Check free headroom before final save
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          WORKROOT="$RUNNER_TEMP/okx-notification-acceptance"
+          gh api "repos/$GITHUB_REPOSITORY/actions/cache/usage" > "$WORKROOT/usage.json"
+          gh api "repos/$GITHUB_REPOSITORY/actions/caches?key=okx-stage4-notify-v1-&per_page=100" > "$WORKROOT/caches.json"
+          python -m crypto_boom.okx_notify_acceptance guard-final --root "$WORKROOT"
+      - name: Save final state explicitly
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ${{ runner.temp }}/okx-notification-acceptance/transfer
+          key: ${{ steps.publish.outputs.final_key }}
+      - name: Require provider-observed final save
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          WORKROOT="$RUNNER_TEMP/okx-notification-acceptance"
+          gh api "repos/$GITHUB_REPOSITORY/actions/cache/usage" > "$WORKROOT/usage.json"
+          gh api "repos/$GITHUB_REPOSITORY/actions/caches?key=okx-stage4-notify-v1-&per_page=100" > "$WORKROOT/caches.json"
+          python -m crypto_boom.okx_notify_acceptance final --root "$WORKROOT"
+      - name: Show bounded result, not email delivery proof
+        if: always()
+        shell: bash
+        run: |
+          WORKROOT="$RUNNER_TEMP/okx-notification-acceptance"
+          if [[ -f "$WORKROOT/result.json" ]]; then
+            printf '### Isolated TEST result (email arrival unverified)\n```json\n' >> "$GITHUB_STEP_SUMMARY"
+            head -c 4096 "$WORKROOT/result.json" >> "$GITHUB_STEP_SUMMARY"
+            printf '\n```\n' >> "$GITHUB_STEP_SUMMARY"
+          fi

@@ -25,6 +25,7 @@ FILE = re.compile(r'market/[0-9a-f]{64}\.json\.gz|checkpoint\.json')
 REPO = 'nostalume/crypto-boom-alert'
 REPO_ID = 1391009742
 WORKFLOW = '.github/workflows/okx-cache-acceptance.yml'
+NOTIFICATION_WORKFLOW = '.github/workflows/okx-notification-acceptance.yml'
 
 
 def _json(body):
@@ -188,9 +189,11 @@ def restore(bundle: Path, workspace: Path, *, scope: Scope, source_sha: str, run
             'payload_bytes': total, 'files': len(files)}
 
 
-def admission(mode, current, producer, usage, *, run_id, source_sha, producer_id=0, producer_sha='', expected_digest=''):
+def admission(mode, current, producer, usage, *, run_id, source_sha, producer_id=0, producer_sha='', expected_digest='',
+              workflow_path=WORKFLOW):
     """Admit authenticated workflow-owned JSON, not self-reported cache metadata."""
-    if (mode not in ('bootstrap', 'restore') or not _positive(run_id) or not _sha(source_sha, 40)
+    if (workflow_path not in (WORKFLOW, NOTIFICATION_WORKFLOW)
+            or mode not in ('bootstrap', 'restore') or not _positive(run_id) or not _sha(source_sha, 40)
             or not isinstance(usage, dict) or type(usage.get('active_caches_size_in_bytes')) is not int
             or not 0 <= usage['active_caches_size_in_bytes'] <= 8 * GIB
             or type(usage.get('active_caches_count')) is not int or usage['active_caches_count'] < 0
@@ -198,7 +201,7 @@ def admission(mode, current, producer, usage, *, run_id, source_sha, producer_id
         raise ValueError('cache_free_admission_denied')
     for run, identity, source in [(current, run_id, source_sha), *([(producer, producer_id, producer_sha)] if mode == 'restore' else [])]:
         if (not isinstance(run, dict) or type(run.get('id')) is not int or run['id'] != identity
-                or not _positive(run.get('workflow_id')) or run.get('path') != WORKFLOW
+                or not _positive(run.get('workflow_id')) or run.get('path') != workflow_path
                 or run.get('event') != 'workflow_dispatch' or run.get('run_attempt') != 1
                 or type(run.get('run_attempt')) is not int or run.get('head_branch') != 'main'
                 or run.get('head_sha') != source or not _sha(source, 40)
