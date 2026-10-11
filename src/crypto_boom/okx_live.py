@@ -11,6 +11,7 @@ import json
 import os
 import re
 import time
+from collections import Counter
 from pathlib import Path
 
 from . import okx_cache as cache
@@ -230,10 +231,12 @@ def prepare(root, *, now):
         if state is None and store.path.exists():
             raise Unavailable(reason)
         expected = None if state is None else state.generation
-        token, deadline = store.writer_token, time.monotonic() + 480
+        started = time.monotonic()
+        token, deadline = store.writer_token, started + 480
         if supervise(scan_job, (workspace, 1000, 4, token, expected, deadline, notification_mode, baseline_digest),
                      seconds=480, grace=5, lock_owner=store) != 0:
             raise Unavailable('live_scan_child_failed')
+        elapsed = round(time.monotonic() - started, 3)
     report = _file(workspace, 'scan-report.json', 16 * MIB)
     now = max(now, int(time.time() * 1000))
     state, reason = store.load()
@@ -243,8 +246,20 @@ def prepare(root, *, now):
     result = {k: report[k] for k in ('at', 'pool', 'complete', 'partial', 'warmup', 'already_evaluated', 'deferred',
                                     'coverage_capped', 'http_attempts', 'http_retries', 'response_bytes')}
     result.update(mode=os.environ['MODE'], publication='not_sent', blocked=selection['blocked'],
-                  previous_key=selection['previous_key'], generation=state.generation)
+                  previous_key=selection['previous_key'], generation=state.generation,
+                  job='prepare', run_id=current['id'], source_sha=current['head_sha'],
+                  observed_at=now, scan_elapsed_seconds=elapsed, cutoff_age_ms=now - report['at'],
+                  market_coverage={kind: dict(Counter(row['status'] for row in report['products']
+                                                     if row['product'][1] == kind)) for kind in ('SPOT', 'SWAP')},
+                  transition_counts=dict(Counter(t['stage'] for t in report['transitions'])))
+    ages = [now - t['at'] for t in report['transitions']]
+    result['transition_age_ms'] = {'min': min(ages, default=None), 'max': max(ages, default=None)}
     _write(root, 'result.json', result)
+    # Observation only: event identity + stage can reveal repeats across logs.
+    # Neither these rows nor a summary replaces the independent final proof.
+    for transition in report['transitions']:
+        print('OKX_TRANSITION_V1 ' + json.dumps({'run_id': current['id'], 'source_sha': current['head_sha'],
+                                               **transition}, sort_keys=True))
     if not selection['persist']:
         _outputs({'persist': 'false', 'has_intent': 'false'})
         return
@@ -291,7 +306,8 @@ def consume(root, *, now, transport=None):
                                  readme=readme, observed_at=now, publish=publisher)
     bundle.rename(root / 'workspace')
     _write(root, 'result.json', {'mode': 'live', 'publication': 'commit_observed', 'commit': commit,
-                               'previous_key': previous_key, 'email': 'not_verified_by_this_run'})
+                               'previous_key': previous_key, 'email': 'not_verified_by_this_run',
+                               'job': 'consume', 'run_id': current['id'], 'source_sha': current['head_sha']})
     _export(root, root / 'workspace', current, scope, 'final', now)
 
 
@@ -367,6 +383,7 @@ def main():
         finish(args.root)
     else:
         result = _file(args.root, 'result.json') if (args.root / 'result.json').is_file() else {'status': 'blocked_or_failed_before_result'}
+        print('OKX_RUN_V1 ' + json.dumps(result, sort_keys=True))
         with open(os.environ['GITHUB_STEP_SUMMARY'], 'a', encoding='utf-8') as stream:
             stream.write('### OKX candidate (not email-delivery proof)\n```json\n' + json.dumps(result, sort_keys=True) + '\n```\n')
 

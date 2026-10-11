@@ -499,3 +499,114 @@ def test_actual_export_is_next_runner_predecessor_without_replaying_confirmed_in
     saved, _ = StateStore(next_root / 'transfer/checkpoint.json').load()
     assert saved.notifications_enabled and {v['status'] for v in saved.ledger.values()} == {'confirmed'}
     assert saved.generation > proof['generation'] and api.patch_calls == 1
+
+
+def test_prepare_exposes_observation_not_notification(fixture, monkeypatch, capsys):
+    root, seed, signal = fixture
+    proof = seed()
+    signal['on'] = True
+    live.select(root)
+    live.admit(root)
+    live.prepare(root, now=NOW)
+    result = read(root, 'result.json')
+    assert result['job'] == 'prepare' and result['run_id'] == 20 and result['source_sha'] == SOURCE
+    assert result['publication'] == 'not_sent' and result['observed_at'] == NOW
+    assert result['cutoff_age_ms'] == 3000 and result['scan_elapsed_seconds'] >= 0
+    assert result['market_coverage'] == {'SPOT': {'complete': 1}, 'SWAP': {}}
+    assert result['transition_counts'] == {'OBSERVED': 1}
+    assert result['transition_age_ms'] == {'min': 3000, 'max': 3000}
+    lines = capsys.readouterr().out.splitlines()
+    events = [json.loads(line.removeprefix('OKX_TRANSITION_V1 ')) for line in lines]
+    assert events == json.loads(json.dumps([{'run_id': 20, 'source_sha': SOURCE,
+                                            **asdict(provider.change(at=T + MINUTE))}]))
+    state, reason = StateStore(root / 'transfer/checkpoint.json').load()
+    assert state is not None, reason
+    assert not state.notifications_enabled and not state.ledger
+    assert read(root, 'export.json')['manifest_sha256'] != proof['manifest_sha256']
+
+
+def test_summary_stdout_and_ui_match_and_do_not_require_result(fixture, monkeypatch, capsys):
+    root, _, _ = fixture
+    summary = root / 'summary.md'
+    monkeypatch.setenv('GITHUB_STEP_SUMMARY', str(summary))
+    monkeypatch.setattr(sys, 'argv', ['okx_live', 'summary', '--root', str(root)])
+    for result in ({'status': 'blocked_or_failed_before_result'}, {'mode': 'preview', 'publication': 'not_sent'}):
+        if 'mode' in result:
+            write(root, 'result.json', result)
+        live.main()
+        line = capsys.readouterr().out.strip()
+        assert line.startswith('OKX_RUN_V1 ')
+        assert json.loads(line.removeprefix('OKX_RUN_V1 ')) == result
+        assert json.dumps(result, sort_keys=True) in summary.read_text(encoding='utf-8')
+
+
+@pytest.mark.parametrize('blocked', [False, True])
+def test_quiet_observation_has_no_events_even_when_diagnostic(fixture, monkeypatch, capsys, blocked):
+    root, seed, _ = fixture
+    seed()
+    if blocked:
+        write(root, 'caches.json', listing())
+    live.select(root)
+    live.admit(root)
+    live.prepare(root, now=NOW)
+    result = read(root, 'result.json')
+    assert result['transition_counts'] == {} and result['transition_age_ms'] == {'min': None, 'max': None}
+    assert result['publication'] == 'not_sent'
+    assert bool(result['blocked']) == blocked
+    assert ('final_key' not in result)  # Logging is not native persistence evidence.
+    assert not capsys.readouterr().out
+
+
+def test_observation_keeps_stage_identity_and_old_rows_not_mail_count(fixture, monkeypatch, capsys):
+    root, seed, signal = fixture
+    seed()
+    signal['on'] = True
+    original = scanner.scan
+
+    def replay(*args, **kwargs):
+        report = original(*args, **kwargs)
+        first = report['transitions'][0]
+        first['identity'] = (*first['identity'][:3], T)
+        first['at'] = T
+        old = T - (24 * 60 - 1) * MINUTE
+        report['transitions'] += [
+            {**first, 'stage': 'PERSISTENT', 'at': T + MINUTE},
+            {**first, 'identity': (*first['identity'][:3], old), 'stage': 'ENDED', 'at': old},
+        ]
+        return report
+
+    monkeypatch.setattr(scanner, 'scan', replay)
+    live.select(root)
+    live.admit(root)
+    live.prepare(root, now=NOW)
+    result = read(root, 'result.json')
+    assert result['transition_counts'] == {'OBSERVED': 1, 'PERSISTENT': 1, 'ENDED': 1}
+    assert result['transition_age_ms'] == {'min': 3000, 'max': 24 * 60 * MINUTE + 3000}
+    events = [json.loads(line.removeprefix('OKX_TRANSITION_V1 ')) for line in capsys.readouterr().out.splitlines()]
+    assert [r['stage'] for r in events] == ['OBSERVED', 'PERSISTENT', 'ENDED']
+    assert events[0]['identity'] == events[1]['identity'] != events[2]['identity']
+    assert result['publication'] == 'not_sent'  # Includes END/expired rows, not eligible emails.
+
+
+def test_failed_scan_has_no_committed_observation(fixture, monkeypatch, capsys):
+    root, seed, _ = fixture
+    seed()
+    live.select(root)
+    live.admit(root)
+    monkeypatch.setattr(live, 'supervise', lambda *args, **kwargs: 1)
+    with pytest.raises(Unavailable, match='live_scan_child_failed'):
+        live.prepare(root, now=NOW)
+    assert not (root / 'result.json').exists() and not (root / 'export.json').exists()
+    assert not capsys.readouterr().out
+
+
+def test_observation_time_is_taken_after_scan(fixture, monkeypatch):
+    root, seed, _ = fixture
+    seed()
+    live.select(root)
+    live.admit(root)
+    monkeypatch.setattr(live.time, 'time', lambda: (NOW + 2 * MINUTE) / 1000)
+    live.prepare(root, now=NOW)
+    result = read(root, 'result.json')
+    assert result['observed_at'] == NOW + 2 * MINUTE
+    assert result['cutoff_age_ms'] == 2 * MINUTE + 3000
