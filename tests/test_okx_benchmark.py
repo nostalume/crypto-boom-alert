@@ -100,7 +100,7 @@ def test_failure_stops_without_fourth_round_and_keeps_diagnostic(tmp_path, monke
                                          ("pool", True), ("complete", -1), ("complete", 0),
                                          ("products", []), ("coverage_capped", True),
                                          ("http_attempts", 2401), ("http_retries", 5),
-                                         ("response_bytes", 128 * 1024 * 1024 + 1),
+                                         ("response_bytes", 128 * 1024 * 1024 + 8 * 65536 + 1),
                                          ("metadata_eligible", 0)])
 def test_bad_report_cannot_claim_success(tmp_path, field, value):
     body = write_report(tmp_path)
@@ -140,6 +140,16 @@ def test_already_evaluated_remains_explicit(tmp_path):
     write_report(tmp_path, status="already_evaluated")
     summary, _ = bench.read_scan_report(tmp_path, None)
     assert summary["complete"] == 0 and summary["already_evaluated"] == 1
+
+
+@pytest.mark.parametrize("overshoot", [1, 8 * 65536])
+def test_read_charge_guard_crossing_is_observed_not_fake_bad_report(tmp_path, overshoot):
+    body = write_report(tmp_path)
+    body["response_bytes"] = 128 * 1024 * 1024 + overshoot
+    (tmp_path / "scan-report.json").write_text(json.dumps(body))
+    summary, _ = bench.read_scan_report(tmp_path, None)
+    assert summary["read_byte_guard_crossed"]
+    assert summary["response_bytes"] == body["response_bytes"]
 
 
 def test_sampler_counts_disappeared_processes_without_faking_zero_peak():

@@ -1,8 +1,10 @@
-"""Bounded, read-only GitHub state artifacts. Not a publisher or quota authority.
+"""Bounded read-only GitHub artifacts/receipt traces, not a publisher or quota authority.
 
 No CLI or production workflow calls this reader. Tests inject MockTransport;
-actual authenticated download/producer/frontier acceptance remains separate.
+actual authenticated download/producer/time/frontier acceptance remains separate.
 """
+import base64
+import hashlib
 import io
 import json
 import re
@@ -11,9 +13,9 @@ import time
 import zipfile
 import zlib
 from contextlib import ExitStack
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from datetime import datetime
-from urllib.parse import urlsplit
+from urllib.parse import quote, urlsplit
 
 import httpx
 
@@ -25,11 +27,25 @@ from crypto_boom.okx_storage import (
     Scope,
     decode_state_bundle,
     digest,
+    extract_public_receipt,
 )
 
 PREFIX = "okx-state-v1-"
 NAME = re.compile(r"okx-state-v1-g(0|[1-9][0-9]{0,18})-a([1-9][0-9]{0,8})-([0-9a-f]{64})")
 SHA = re.compile(r"[0-9a-f]{40}")
+
+
+@dataclass(frozen=True)
+class ReceiptTrace:
+    """README changes on an observed chain, NOT authenticated publications.
+
+    Anchor content is baseline only. changes is oldest first; None is a removal.
+    No producer/time evidence, completeness window or notification capability.
+    """
+    scope: Scope
+    anchor: str
+    head: str
+    changes: tuple[tuple[str, str | None], ...]
 
 
 def _int(value, minimum=0):
@@ -186,6 +202,109 @@ class GitHubStateReader:
         if not isinstance(value, dict):
             raise ValueError("provider_object_required")
         return value
+
+    def _receipt_head(self):
+        repo = self._json(f"/repos/{self.scope.repository}")
+        if (repo.get("full_name") != self.scope.repository or not _int(repo.get("id"), 1)
+                or repo.get("default_branch") != self.scope.ref.removeprefix("refs/heads/")):
+            raise ValueError("repository_identity_mismatch")
+        ref = self._json(f"/repos/{self.scope.repository}/git/ref/"
+                         + quote(self.scope.ref.removeprefix("refs/"), safe="/"))
+        obj = ref.get("object")
+        if (ref.get("ref") != self.scope.ref or not isinstance(obj, dict)
+                or obj.get("type") != "commit" or not isinstance(obj.get("sha"), str)
+                or SHA.fullmatch(obj["sha"]) is None):
+            raise ValueError("receipt_ref_identity")
+        return (repo["id"], repo["full_name"], repo["default_branch"]), obj["sha"]
+
+    def _receipt_readme(self, tree_sha, trees, blobs):
+        if tree_sha not in trees:
+            tree = self._json(f"/repos/{self.scope.repository}/git/trees/{tree_sha}")
+            rows = tree.get("tree")
+            if (tree.get("sha") != tree_sha or tree.get("truncated") is not False
+                    or not isinstance(rows, list) or len(rows) > 10000):
+                raise ValueError("receipt_tree_incomplete")
+            entries = {}
+            for row in rows:
+                if (not isinstance(row, dict) or not isinstance(row.get("path"), str)
+                        or not 0 < len(row["path"]) <= 1024 or "/" in row["path"] or "\0" in row["path"]
+                        or row["path"] in entries):
+                    raise ValueError("receipt_tree_path")
+                entries[row["path"]] = row
+            entry = entries.get("README.md")
+            marker = None
+            if entry is not None:
+                blob_sha = entry.get("sha")
+                if (entry.get("type") != "blob" or entry.get("mode") not in ("100644", "100755")
+                        or not isinstance(blob_sha, str) or SHA.fullmatch(blob_sha) is None):
+                    raise ValueError("receipt_readme_not_regular")
+                if blob_sha not in blobs:
+                    blob = self._json(f"/repos/{self.scope.repository}/git/blobs/{blob_sha}")
+                    content, size = blob.get("content"), blob.get("size")
+                    if (blob.get("sha") != blob_sha or blob.get("encoding") != "base64"
+                            or not _int(size) or size > MIB or not isinstance(content, str)):
+                        raise ValueError("receipt_blob_identity_or_size")
+                    encoded = content.replace("\n", "")
+                    if len(encoded) > 4 * ((MIB + 2) // 3):
+                        raise ValueError("receipt_blob_encoded_limit")
+                    raw = base64.b64decode(encoded, validate=True)
+                    if (len(raw) != size or len(raw) > MIB
+                            or base64.b64encode(raw).decode("ascii") != encoded
+                            or hashlib.sha1(b"blob " + str(len(raw)).encode("ascii") + b"\0" + raw).hexdigest()
+                            != blob_sha):
+                        raise ValueError("receipt_blob_digest_or_size")
+                    blobs[blob_sha] = extract_public_receipt(raw)
+                marker = blobs[blob_sha]
+            trees[tree_sha] = marker
+        return trees[tree_sha]
+
+    def receipt_trace(self, anchor: str) -> ReceiptTrace:
+        """Observe <= 8 commits from pinned default head to a caller-trusted anchor.
+
+        All reads share this reader's 32 GET/32 MiB/120s cooperative budget. Missing
+        or longer chains, merges and repo/ref drift raise, never return partial.
+        Repeated carried markers are not new changes. Reintroduction after removal
+        remains visible. Caller must separately authenticate producer and causal
+        time/frontier before constructing ReceiptQuery or reconciling any state.
+        Commit dates and Events are deliberately unused. No state is changed.
+        The ref fence detects endpoint drift, not intervening change-and-return
+        (ABA), erased past history, or a distributed compare-and-swap condition.
+        """
+        self._check()
+        if not isinstance(anchor, str) or SHA.fullmatch(anchor) is None:
+            raise ValueError("receipt_anchor_required")
+        fence = self._receipt_head()
+        current = fence[1]
+        chain, seen, trees, blobs = [], set(), {}, {}
+        for _ in range(8):
+            self._check()
+            if current in seen:
+                raise ValueError("receipt_chain_cycle")
+            seen.add(current)
+            commit = self._json(f"/repos/{self.scope.repository}/git/commits/{current}")
+            parents, tree = commit.get("parents"), commit.get("tree")
+            if (commit.get("sha") != current or not isinstance(parents, list) or len(parents) > 1
+                    or not isinstance(tree, dict) or not isinstance(tree.get("sha"), str)
+                    or SHA.fullmatch(tree["sha"]) is None
+                    or any(not isinstance(p, dict) or not isinstance(p.get("sha"), str)
+                           or SHA.fullmatch(p["sha"]) is None for p in parents)):
+                raise ValueError("receipt_commit_identity_or_merge")
+            chain.append((current, self._receipt_readme(tree["sha"], trees, blobs)))
+            if current == anchor:
+                break
+            if not parents:
+                raise ValueError("receipt_anchor_unreachable")
+            current = parents[0]["sha"]
+        else:
+            raise ValueError("receipt_chain_limit")
+        if self._receipt_head() != fence:
+            raise ValueError("receipt_head_drift")
+        changes, previous = [], chain[-1][1]
+        for sha, marker in reversed(chain[:-1]):
+            if marker != previous:
+                changes.append((sha, marker))
+            previous = marker
+        return ReceiptTrace(self.scope, anchor, fence[1], tuple(changes))
 
     def _artifacts(self):
         rows, seen, total = [], set(), None

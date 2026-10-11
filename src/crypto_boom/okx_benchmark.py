@@ -155,7 +155,10 @@ def read_scan_report(workspace: Path, previous_token: str | None):
         if type(value.get(key)) is not int or value[key] < 0:
             raise ValueError("benchmark_report_counter")
     if (value["http_attempts"] > 2400 or value["http_retries"] > value["http_attempts"]
-            or value["response_bytes"] > 128 * 1024 * 1024
+            # The existing reader charges after yielding a <=64KiB chunk.
+            # Up to eight in-flight workers can cross the soft charge guard;
+            # observing that crossing is not an invalid scan report or a TCP cap.
+            or value["response_bytes"] > 128 * 1024 * 1024 + 8 * 65536
             or value["metadata_eligible"] < value["pool"]
             or value["coverage_capped"] != (value["metadata_eligible"] > value["pool"])):
         raise ValueError("benchmark_report_budget_or_pool")
@@ -171,6 +174,7 @@ def read_scan_report(workspace: Path, previous_token: str | None):
     summary = {key: value[key] for key in ("at", "pool", *COUNTS, "metadata_eligible", "coverage_capped",
                                           "http_attempts", "http_retries", "response_bytes")}
     summary["hour_context_counts"] = value.get("hour_context_counts")
+    summary["read_byte_guard_crossed"] = value["response_bytes"] > 128 * 1024 * 1024
     summary["state_generation"] = checkpoint.generation
     summary["checkpoint_bytes"] = len(state_raw)
     # Sum real compressed cache files only, never tmp/locks/reports or billed ZIPs.
