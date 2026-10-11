@@ -269,6 +269,35 @@ class StateStore:
         atomic_write(self.path, raw)
         return restored
 
+    def enable_baseline(self, *, checkpoint_sha256: str, generation: int, at: int, products: tuple):
+        """Explicit local approval of a complete non-notifying scan, not a send.
+
+        Caller owns approval and the complete admitted product pool. Never reset
+        unresolved intent, replay this scan's transitions, or infer remote save.
+        """
+        if not self.locked or not self._owns_lock():
+            raise Unavailable('writer_lock_required')
+        if (not isinstance(checkpoint_sha256, str) or len(checkpoint_sha256) != 64
+                or any(c not in '0123456789abcdef' for c in checkpoint_sha256)
+                or type(generation) is not int or generation < 1 or not _minute(at)
+                or not isinstance(products, tuple) or not 1 <= len(products) <= 1000):
+            raise ValueError('baseline_approval_identity')
+        keys = tuple(_product_key(p) for p in products)
+        if len(set(keys)) != len(keys):
+            raise ValueError('baseline_duplicate_products')
+        with self.path.open('rb') as stream:
+            raw = stream.read(8 * 1024 * 1024 + 1)
+        if hashlib.sha256(raw).hexdigest() != checkpoint_sha256:
+            raise Unavailable('baseline_checkpoint_changed')
+        state, reason = self.load()
+        if (state is None or state.generation != generation or state.at != at or state.notifications_enabled
+                or any(v['status'] != 'confirmed' for v in state.ledger.values())
+                or any(state.tracker.last_at.get(('A0', key)) != at for key in keys)):
+            raise Unavailable('baseline_incomplete_or_unresolved:' + reason)
+        state.notifications_enabled = True
+        self.save(state, generation)
+        return state
+
 
 def _checkpoint_bytes(state: Checkpoint) -> bytes:
     body = state.encode()

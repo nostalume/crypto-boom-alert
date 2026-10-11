@@ -1,4 +1,4 @@
-"""No-publish Stage 3 scanner. Production workflow deliberately does not call it."""
+"""Reusable no-publish scanner; the CLI remains strictly shadow-only."""
 from __future__ import annotations
 
 import argparse
@@ -351,7 +351,7 @@ def main():
         expected = None if state is None else state.generation
         token = store.writer_token
         deadline = time.monotonic() + 480
-        exitcode = supervise(_shadow_job, (args.workspace, args.limit, args.workers, token, expected, deadline),
+        exitcode = supervise(scan_job, (args.workspace, args.limit, args.workers, token, expected, deadline),
                              seconds=480, grace=5, lock_owner=store)
         if exitcode != 0:
             raise Unavailable("shadow_child_failed:" + str(exitcode))
@@ -365,7 +365,7 @@ def main():
         print(json.dumps({k: v for k, v in report.items() if k not in ("products", "transitions", "http", "run_token")}))
 
 
-def _shadow_job(workspace, limit, workers, token, expected, deadline):
+def scan_job(workspace, limit, workers, token, expected, deadline, notification_mode='shadow', baseline_digest=''):
     """All potentially blocking job I/O lives in the supervised child."""
     seconds = min(480, deadline - time.monotonic())
     if seconds <= 60:
@@ -377,8 +377,12 @@ def _shadow_job(workspace, limit, workers, token, expected, deadline):
         if ((expected is None and (state is not None or store.path.exists()))
                 or (expected is not None and (state is None or state.generation != expected))):
             raise Unavailable("shadow_generation_changed")
+        if notification_mode not in ('shadow', 'resume', 'baseline'):
+            raise ValueError('scan_notification_mode')
         if state is not None and state.notifications_enabled:
             raise Unavailable("shadow_workspace_required")
+        if notification_mode != 'shadow' and (state is None or any(v['status'] != 'confirmed' for v in state.ledger.values())):
+            raise Unavailable('scan_validated_baseline_required')
         state = state or Checkpoint()
         with PublicClient(budget) as client:
             clock = client.get("/api/v5/public/time")
@@ -391,6 +395,17 @@ def _shadow_job(workspace, limit, workers, token, expected, deadline):
                     except Unavailable:
                         excluded += 1
         products.sort(key=lambda p: p.key)
+        if notification_mode != 'shadow':
+            if len(products) > limit:
+                raise Unavailable('live_full_pool_required')
+            if notification_mode == 'baseline':
+                state = store.enable_baseline(checkpoint_sha256=baseline_digest, generation=state.generation,
+                                              at=state.at, products=tuple(p.key for p in products))
+            else:
+                # Caller admitted an armed exact predecessor; no fresh baseline.
+                state.notifications_enabled = True
+                store.save(state, expected)
+            expected = state.generation
         report = scan(products[:limit], at, ProductCache(workspace / "market"), state, budget, workers=workers)
         report.update({"metadata_eligible": len(products), "excluded_metadata": excluded,
                        "coverage_capped": len(products) > limit, "state": state_reason, "run_token": token})
