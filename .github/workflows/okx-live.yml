@@ -1,6 +1,8 @@
-name: OKX live candidate
+name: OKX altcoin alert
 
 "on":
+  schedule:
+    - cron: '3-59/10 * * * *'
   workflow_dispatch:
     inputs:
       mode:
@@ -37,7 +39,7 @@ concurrency:
 env:
   PYTHONPATH: src
   PYTHONDONTWRITEBYTECODE: "1"
-  MODE: ${{ inputs.mode || 'preview' }}
+  MODE: ${{ github.event_name == 'schedule' && 'live' || inputs.mode || 'preview' }}
   REBUILD: ${{ inputs.rebuild || false }}
   ARM_MANIFEST: ${{ inputs.arm_manifest }}
   LIVE_ENABLED: ${{ vars.OKX_LIVE_ENABLED }}
@@ -48,7 +50,7 @@ env:
 jobs:
   prepare:
     if: github.repository == 'nostalume/crypto-boom-alert' && github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
       contents: read
@@ -194,7 +196,7 @@ jobs:
   consume:
     needs: prepare
     if: needs.prepare.outputs.has_intent == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
       contents: write

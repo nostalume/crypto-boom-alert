@@ -47,6 +47,6 @@ def test_operations_guide_describes_direct_start_and_fail_closed_recovery():
         assert phrase in raw
     assert 'PYTHONPATH=src' in raw
     candidate = yaml.safe_load((ROOT / '.github/workflows/okx-live.yml').read_text(encoding='utf-8'))
-    assert set(candidate['on']) == {'workflow_dispatch'}
+    assert set(candidate['on']) == {'workflow_dispatch', 'schedule'}
     assert all(key in raw for key in ('preview', 'live', 'rebuild', 'arm_manifest',
                                      'observation_start_ms', 'observation_end_ms', 'observation_digest'))

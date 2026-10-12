@@ -415,11 +415,13 @@ def test_cleanup_rechecks_exact_object_and_final_is_required(fixture, monkeypatc
         live.finish(root)
 
 
-def test_candidate_workflow_has_no_schedule_artifact_or_inline_untrusted_code():
+def test_production_workflow_has_bounded_schedule_and_no_inline_untrusted_code():
     root = Path(__file__).resolve().parents[1]
     raw = (root / live.WORKFLOW).read_text(encoding='utf-8')
     value = yaml.safe_load(raw)
-    assert set(value['on']) == {'workflow_dispatch'}
+    assert set(value['on']) == {'workflow_dispatch', 'schedule'}
+    assert value['on']['schedule'] == [{'cron': '3-59/10 * * * *'}]
+    assert value['env']['MODE'] == "${{ github.event_name == 'schedule' && 'live' || inputs.mode || 'preview' }}"
     assert value['permissions'] == {} and value['concurrency']['cancel-in-progress'] is False
     assert value['on']['workflow_dispatch']['inputs']['mode']['default'] == 'preview'
     prepare, consume = value['jobs']['prepare'], value['jobs']['consume']
@@ -428,7 +430,7 @@ def test_candidate_workflow_has_no_schedule_artifact_or_inline_untrusted_code():
     assert consume['if'] == "needs.prepare.outputs.has_intent == 'true'"
     paths = set()
     for job in (prepare, consume):
-        assert job['runs-on'] == 'ubuntu-latest' and job['timeout-minutes'] == 15
+        assert job['runs-on'] == 'ubuntu-24.04' and job['timeout-minutes'] == 15
         for step in job['steps']:
             if 'uses' in step:
                 assert len(step['uses'].split('@')[1]) == 40
@@ -715,11 +717,11 @@ def test_window_expiring_during_scan_does_not_export(fixture, monkeypatch):
     assert not (root / 'export.json').exists() and not (root / 'result.json').exists()
 
 
-def test_finite_workflow_is_manual_and_stop_permission_scope_is_unchanged():
+def test_optional_finite_preview_keeps_stop_permission_scope_unchanged():
     path = Path(__file__).parents[1] / live.WORKFLOW
     text = path.read_text(encoding='utf-8')
     workflow = yaml.safe_load(text)
-    assert set(workflow['on']) == {'workflow_dispatch'}
+    assert set(workflow['on']) == {'workflow_dispatch', 'schedule'}
     prepare = workflow['jobs']['prepare']
     assert prepare['permissions'] == {'contents': 'read', 'actions': 'write'}
     steps = prepare['steps']
@@ -739,6 +741,29 @@ def test_startup_gate_does_not_require_not_yet_fetched_live_fences(fixture, monk
     # Only admission is open; the real select still requires fresh writer fences.
     with pytest.raises(ValueError, match='cache_regular_file_required'):
         live.select(root)
+
+
+@pytest.mark.parametrize('armed', [True, False])
+def test_scheduled_live_requires_armed_state_without_window_or_rebuild(fixture, monkeypatch, armed):
+    root, seed, _ = fixture
+    seed(enabled=armed)
+    current = read(root, 'current.json')
+    current['event'] = 'schedule'
+    write(root, 'current.json', current)
+    write(root, 'history.json', {'total_count': 2, 'workflow_runs': [current, run(1)]})
+    monkeypatch.setenv('GITHUB_EVENT_NAME', 'schedule')
+    monkeypatch.setenv('MODE', 'live')
+    live.window_gate(root, now=NOW)
+    live.select(root)
+    live.admit(root)
+    if not armed:
+        with pytest.raises(Unavailable, match='reviewed_manifest_approval_required'):
+            live.prepare(root, now=NOW)
+        assert not (root / 'export.json').exists()
+        return
+    live.prepare(root, now=NOW)
+    state, _ = StateStore(root / 'transfer/checkpoint.json').load()
+    assert state.notifications_enabled and read(root, 'result.json')['publication'] == 'not_sent'
 
 
 def test_window_fingerprint_freezes_workflow_not_readme_and_normalizes_lf(tmp_path, monkeypatch):
