@@ -3,6 +3,7 @@ import json
 import os
 import subprocess
 import sys
+import threading
 from copy import deepcopy
 from pathlib import Path
 
@@ -83,6 +84,7 @@ def test_cold_warm_and_same_cutoff_previews_persist_without_notifications(tmp_pa
     assert saved.ledger == {} and not saved.notifications_enabled
     text = (tmp_path / 'preview.txt').read_text(encoding='utf-8')
     assert 'LOCAL PREVIEW' in text and 'ALT-USDT' in text and 'OBSERVED' in text
+    assert text.isascii()
     second = run_preview(tmp_path, monkeypatch, capsys, at=T + trial.MINUTE, spawned=spawned)
     report = json.loads((tmp_path / 'scan-report.json').read_bytes())
     assert second['checkpoint_generation'] == 3 and second['state'] == 'state_hit'
@@ -94,6 +96,37 @@ def test_cold_warm_and_same_cutoff_previews_persist_without_notifications(tmp_pa
     assert third['checkpoint_generation'] == 4 and not checkpoint(tmp_path).notifications_enabled
     assert before == {p.name: p.read_bytes() for p in (tmp_path / 'market').glob('*.json.gz')}
     assert not (tmp_path / 'checkpoint.json.lock').exists()
+    assert initial['started_at'] <= initial['completed_at']
+    assert initial['data_age_seconds'] == max(0, initial['completed_at'] - initial['at']) // 1000
+    assert 'UTC / local' in text and 'Scan started:' in text and 'Scan ended:' in text
+    assert 'Data age at scan end:' in text and 'not live progress' in text
+
+
+def test_progress_distinguishes_ticks_from_success_and_stops_on_failure(monkeypatch):
+    clock = Clock()
+    budget = data.Budget(clock=clock.clock, sleep=clock.sleep)
+    progress = {'phase': 'mandatory', 'processed': 0, 'total': 2}
+    logged, tick = [], threading.Event()
+    def log(message):
+        logged.append(message)
+        tick.set()
+    monkeypatch.setattr(scan, 'PROGRESS_INTERVAL', .01)
+    monkeypatch.setattr(scan, 'scan_log', log)
+    before = set(threading.enumerate())
+    with pytest.raises(trial.Unavailable, match='fixture failure'):
+        with scan.scan_progress(budget, progress):
+            assert tick.wait(2)
+            assert 'last_success=none' in logged[-1] and 'processed=0/2' in logged[-1]
+            budget.observe({'status': 200, 'failure': 'invalid_json'})
+            assert budget.last_success_at is None
+            budget.observe({'status': 200, 'failure': None})
+            clock.sleep(5)
+            progress['processed'] = 1
+            tick.clear()
+            assert tick.wait(2)
+            assert 'last_success=5s ago' in logged[-1] and 'processed=1/2' in logged[-1]
+            raise trial.Unavailable('fixture failure')
+    assert set(threading.enumerate()) <= before
 
 
 @pytest.mark.parametrize('status', ['confirmed', 'pending', 'unknown'])
@@ -164,7 +197,7 @@ def test_metadata_failure_keeps_previous_checkpoint_and_report(tmp_path, monkeyp
 def test_capped_preview_is_not_claimed_as_full_pool(tmp_path, monkeypatch, capsys):
     result = run_preview(tmp_path, monkeypatch, capsys, extra=('--limit', '1', '--workers', '8'))
     assert result['pool'] == 1 and result['metadata_eligible'] == 2 and result['coverage_capped']
-    assert '截断：True' in (tmp_path / 'preview.txt').read_text(encoding='utf-8')
+    assert 'capped=True' in (tmp_path / 'preview.txt').read_text(encoding='utf-8')
 
 
 def test_damaged_cache_does_not_reset_the_checkpoint_or_ledger(tmp_path, monkeypatch, capsys):

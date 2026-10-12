@@ -54,7 +54,7 @@ def test_status_and_stop_without_registration_do_not_create_workspace(project, c
 
 
 @pytest.mark.parametrize('mode', ['normal', 'overrun', 'offline', 'cancel', 'interrupt', 'invalid'])
-def test_watch_cadence_failure_and_cancellation_are_bounded(project, monkeypatch, mode):
+def test_watch_cadence_failure_and_cancellation_are_bounded(project, monkeypatch, capsys, mode):
     clock = SimpleNamespace(now=0.)
     fake_time = SimpleNamespace(monotonic=lambda: clock.now, sleep=lambda n: setattr(clock, 'now', clock.now + n))
     monkeypatch.setattr(alert, 'time', fake_time)
@@ -81,6 +81,8 @@ def test_watch_cadence_failure_and_cancellation_are_bounded(project, monkeypatch
     assert code == (130 if mode == 'interrupt' else 2 if mode == 'invalid' else 0)
     assert starts == ([0.] if mode in ('cancel', 'interrupt', 'invalid') else [0., 130.] if mode == 'overrun' else [0., 60.])
     assert not (project / 'schedule.json').exists() and not (project / 'stop.request').exists()
+    if mode in ('normal', 'overrun', 'offline'):
+        assert 'Waiting: next run at local ' in capsys.readouterr().err
 
 
 def test_watch_does_not_claim_stop_if_worker_lock_remains(project, monkeypatch):

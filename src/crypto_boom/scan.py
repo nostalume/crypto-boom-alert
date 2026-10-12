@@ -4,9 +4,11 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import sys
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 from copy import deepcopy
 from dataclasses import asdict
 from datetime import datetime, timezone
@@ -36,6 +38,37 @@ from .trial import (
     admit_product,
     source_cutoff,
 )
+
+PROGRESS_INTERVAL = 20
+
+
+def time_label(at):
+    stamp = datetime.fromtimestamp(at / 1000, timezone.utc)
+    return stamp.strftime('%Y-%m-%d %H:%M:%S UTC') + ' / local ' + stamp.astimezone().isoformat(sep=' ', timespec='seconds')
+
+
+def scan_log(message):
+    print(f'[{datetime.now().astimezone().isoformat(timespec="seconds")}] {message}', file=sys.stderr, flush=True)
+
+
+@contextmanager
+def scan_progress(budget, progress):
+    """One bounded-rate stderr reporter; counter movement, not ticks, proves progress."""
+    stopped = threading.Event()
+    def report():
+        while not stopped.wait(PROGRESS_INTERVAL):
+            now = budget.clock()
+            success_age = 'none' if budget.last_success_at is None else f'{max(0, now - budget.last_success_at):.0f}s ago'
+            scan_log(f"Scanning phase={progress['phase']} processed={progress['processed']}/{progress['total']} "
+                     f"HTTP={budget.attempts}/{budget.max_requests} retries={budget.retries} "
+                     f"last_success={success_age} elapsed={now - budget.started:.0f}s; heartbeat is not proof of data progress")
+    reporter = threading.Thread(target=report, daemon=True)
+    reporter.start()
+    try:
+        yield
+    finally:
+        stopped.set()
+        reporter.join(timeout=1)
 
 
 def _empty(grain):
@@ -89,7 +122,8 @@ def _hour_coverage(series, at):
 
 
 def scan(products: list[Product], at: int, cache: ProductCache, state: Checkpoint,
-         budget: Budget, *, workers: int = 4, transport=None, max_transitions: int = 10000) -> dict:
+         budget: Budget, *, workers: int = 4, transport=None, max_transitions: int = 10000,
+         progress=None) -> dict:
     """Bounded workers, one product snapshot at a time; caller owns state commit.
 
     Mandatory acquisition/replay finishes across the pool before optional hour
@@ -112,6 +146,11 @@ def scan(products: list[Product], at: int, cache: ProductCache, state: Checkpoin
     def work(chunk, bootstrap):
         nonlocal accepted
         local_reports, local_changes, local_states = [], [], []
+        def record(row):
+            local_reports.append(row)
+            if progress is not None and row['status'] != 'deferred_invalid_cache':
+                with capacity_lock:
+                    progress['processed'] += 1
         with PublicClient(budget, transport=transport) as client:
             for product in chunk:
                 key = ("A0", product.key)
@@ -119,7 +158,7 @@ def scan(products: list[Product], at: int, cache: ProductCache, state: Checkpoin
                 first = at if previous is None else max(previous + MINUTE, at - 24 * HOUR + MINUTE)
                 omitted = 0 if previous is None else max(0, (first - previous) // MINUTE - 1)
                 if first > at:
-                    local_reports.append({"product": product.key, "status": "already_evaluated"})
+                    record({"product": product.key, "status": "already_evaluated"})
                     continue
                 ready = ((product.normal_since + FIVE - 1) // FIVE) * FIVE + WEEK + 2 * FIVE
                 if at < ready:
@@ -133,17 +172,17 @@ def scan(products: list[Product], at: int, cache: ProductCache, state: Checkpoin
                     for t in range(first, at + MINUTE, MINUTE):
                         local.apply(Evaluation("A0", product.key, t, None, reasons=("warmup:normal_history",)))
                     local_states.append((key, local.last_at[key], local.active.get(key)))
-                    local_reports.append({"product": product.key, "status": "warmup", "ready_at": ready,
+                    record({"product": product.key, "status": "warmup", "ready_at": ready,
                                           "catchup_truncated_minutes": omitted,
                                           "evaluated": (at-first)//MINUTE+1, "unknown": (at-first)//MINUTE+1})
                     continue
                 if budget.remaining() <= 0 or budget.attempts >= budget.max_requests:
-                    local_reports.append({"product": product.key, "status": "deferred_budget", "catchup_truncated_minutes": omitted})
+                    record({"product": product.key, "status": "deferred_budget", "catchup_truncated_minutes": omitted})
                     continue
                 started = time.monotonic()
                 snapshot, cache_reason = cache.load(product, at)
                 if snapshot is None and not bootstrap:
-                    local_reports.append({"product": product.key, "status": "deferred_invalid_cache", "cache": cache_reason})
+                    record({"product": product.key, "status": "deferred_invalid_cache", "cache": cache_reason})
                     continue
                 series = snapshot.series if snapshot else {g: _empty(g) for g in GRAINS.values()}
                 # Download only the portion that could satisfy normal-history
@@ -208,7 +247,7 @@ def scan(products: list[Product], at: int, cache: ProductCache, state: Checkpoin
                 if deferred:
                     # Abandon this whole replay, not only its overflowing tail.
                     # Its durable checkpoint remains the replay authority.
-                    local_reports.append({"product": product.key, "status": deferred,
+                    record({"product": product.key, "status": deferred,
                                           "catchup_truncated_minutes": omitted})
                     continue
                 local_changes.extend(product_changes)
@@ -223,7 +262,7 @@ def scan(products: list[Product], at: int, cache: ProductCache, state: Checkpoin
                 hour = _hour_coverage(series[HOUR], at)
                 if candidate and hour["status"] == "not_requested" and not cache_saved:
                     hour["status"] = "deferred_cache"
-                local_reports.append({"product": product.key, "status": "partial" if reason or unavailable else "complete",
+                record({"product": product.key, "status": "partial" if reason or unavailable else "complete",
                                       "cache": cache_reason, "error": reason, "evaluated": evaluated, "unknown": unavailable,
                                       "partial_cache_saved": partial_cache_saved, "cache_error": cache_error,
                                       "context_candidate": candidate, "context_qualified_at": qualified_at,
@@ -265,6 +304,8 @@ def scan(products: list[Product], at: int, cache: ProductCache, state: Checkpoin
                     processed_cold.extend(r for r in rows if r["status"] != "deferred_budget")
     # Barrier: all mandatory workers have joined. Keep only bounded diagnostic
     # rows, not all product snapshots. Optional work cannot starve pool detection.
+    if progress is not None:
+        progress['phase'] = 'hour_context'
     candidates = [r for r in reports if r.get("context_candidate")
                   and r["hour_context"]["status"] == "not_requested"]
     def priority(row):
@@ -339,23 +380,27 @@ def preview_text(report):
     def utc(at):
         return datetime.fromtimestamp(at / 1000, timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')
     lines = [
-        'LOCAL PREVIEW — 不发送通知、不修改通知账本',
-        f"数据截止：{utc(report['at'])}",
-        f"标的：{report['pool']} / {report['metadata_eligible']}；截断：{report['coverage_capped']}",
-        '覆盖：' + ' '.join(f'{key}={report[key]}' for key in
+        'LOCAL PREVIEW - no notifications; notification ledger unchanged',
+        f"Data cutoff: {time_label(report['at'])}",
+        f"Products: {report['pool']} / {report['metadata_eligible']}; capped={report['coverage_capped']}",
+        'Coverage: ' + ' '.join(f'{key}={report[key]}' for key in
                            ('complete', 'already_evaluated', 'partial', 'warmup', 'deferred')),
-        f"检查点 generation={report['checkpoint_generation']}；HTTP={report['http_attempts']}；重试={report['http_retries']}",
-        '按条件变化时间排序；UP/DOWN 不是买卖建议。没有变化不等于没有数据缺口。',
-        '这不是待发送队列；再次扫描同一截止时间不会重复产生条件变化。',
-        '', '本轮条件变化：',
+        f"Checkpoint generation={report['checkpoint_generation']}; HTTP={report['http_attempts']}; retries={report['http_retries']}",
+        'Sorted by transition time; UP/DOWN are not trading advice. No changes does not mean no coverage gaps.',
+        'Not a notification queue; rescanning the same cutoff does not repeat transitions.',
+        '', 'Transitions this run:',
     ]
+    if 'completed_at' in report:
+        lines[2:2] = [f"Scan started: {time_label(report['started_at'])}",
+                      f"Scan ended: {time_label(report['completed_at'])}",
+                      f"Data age at scan end: {report['data_age_seconds']}s; last completed report, not live progress; age increases after completion."]
     for change in sorted(report['transitions'], key=lambda v: (v['at'], v['identity'], v['stage'])):
         rule, product, direction, first = change['identity']
         # JSON string quoting keeps source-provided controls on one plain-text line.
         lines.append('\t'.join((utc(change['at']), json.dumps(product, ensure_ascii=False),
-                                direction, change['stage'], rule, '首次=' + utc(first))))
+                                direction, change['stage'], rule, 'first=' + utc(first))))
     if not report['transitions']:
-        lines.append('无新增条件变化。覆盖缺口和逐标的原因请查看 scan-report.json。')
+        lines.append('No new transitions. See scan-report.json for coverage gaps and per-product reasons.')
     return ('\n'.join(lines) + '\n').encode('utf-8')
 
 
@@ -375,6 +420,7 @@ def main(argv=None, *, cancel=None):
             raise Unavailable('local_workspace_link: use a dedicated regular directory')
     from .runtime import supervise
     started = time.monotonic()
+    scan_log('Run starting: loading persistent state; preview.txt updates only after a successful run.')
     store = StateStore(args.workspace / "checkpoint.json")
     with store.writer():
         state, state_reason = store.load()
@@ -418,17 +464,22 @@ def main(argv=None, *, cancel=None):
                        ledger_entries=len(saved.ledger), ledger_preserved=True,
                        report_path=str(display_workspace / 'scan-report.json'),
                        preview_path=str(display_workspace / 'preview.txt'))
+        scan_log(f"Run completed: preview updated generation={saved.generation} elapsed={summary['elapsed_seconds']}s; "
+                 f"complete={report['complete']} partial={report['partial']} deferred={report['deferred']}; "
+                 'processed does not imply full coverage; no changes does not imply no anomalies.')
         print(json.dumps(summary, sort_keys=True, allow_nan=False))
 
 
 def scan_job(workspace, limit, workers, token, expected, deadline, notification_mode='shadow', baseline_digest=''):
     """All potentially blocking job I/O lives in the supervised child."""
+    started_at = int(time.time() * 1000)
     seconds = min(480, deadline - time.monotonic())
     if seconds <= 60:
         raise Unavailable("startup_consumed_job_budget")
     budget = Budget(seconds=seconds)
+    progress = {'phase': 'metadata', 'processed': 0, 'total': '?'}
     store = StateStore(workspace / "checkpoint.json")
-    with store.borrowed_writer(token):
+    with store.borrowed_writer(token), scan_progress(budget, progress):
         state, state_reason = store.load()
         if ((expected is None and (state is not None or store.path.exists()))
                 or (expected is not None and (state is None or state.generation != expected))):
@@ -440,6 +491,7 @@ def scan_job(workspace, limit, workers, token, expected, deadline, notification_
         if notification_mode != 'shadow' and (state is None or any(v['status'] != 'confirmed' for v in state.ledger.values())):
             raise Unavailable('scan_validated_baseline_required')
         state = state or Checkpoint()
+        scan_log(f'Acquisition started: {time_label(started_at)}; reading OKX time and instruments.')
         with PublicClient(budget) as client:
             clock = client.get("/api/v5/public/time")
             at = source_cutoff(clock[0]["ts"])
@@ -451,6 +503,9 @@ def scan_job(workspace, limit, workers, token, expected, deadline, notification_
                     except Unavailable:
                         excluded += 1
         products.sort(key=lambda p: p.key)
+        progress.update(phase='mandatory', total=min(len(products), limit))
+        scan_log(f"Pool={len(products)} selected={progress['total']} workers={workers}; data_cutoff={time_label(at)}; "
+                 'one fixed cutoff for all products; see final summary for actual coverage.')
         if notification_mode != 'shadow':
             if len(products) > limit:
                 raise Unavailable('live_full_pool_required')
@@ -462,9 +517,14 @@ def scan_job(workspace, limit, workers, token, expected, deadline, notification_
                 state.notifications_enabled = True
                 store.save(state, expected)
             expected = state.generation
-        report = scan(products[:limit], at, ProductCache(workspace / "market"), state, budget, workers=workers)
+        report = scan(products[:limit], at, ProductCache(workspace / "market"), state, budget,
+                      workers=workers, progress=progress)
+        progress['phase'] = 'checkpoint'
+        completed_at = int(time.time() * 1000)
         report.update({"metadata_eligible": len(products), "excluded_metadata": excluded,
                        "coverage_capped": len(products) > limit, "state": state_reason, "run_token": token,
+                       "started_at": started_at, "completed_at": completed_at,
+                       "data_age_seconds": max(0, completed_at - at) // 1000,
                        "checkpoint_generation": state.generation + 1})
         raw = json.dumps(report, separators=(",", ":"), allow_nan=False).encode()
         if len(raw) > 16 * 1024 * 1024:
@@ -472,6 +532,9 @@ def scan_job(workspace, limit, workers, token, expected, deadline, notification_
         store.save(state, expected)
         # A timeout after state replacement is not permission to roll back/send.
         atomic_write(workspace / "scan-report.json", raw)
+        scan_log(f"Scan result saved: cutoff={time_label(at)} data_age_at_end={report['data_age_seconds']}s "
+                 f"complete={report['complete']} partial={report['partial']} warmup={report['warmup']} "
+                 f"deferred={report['deferred']}; HTTP={budget.attempts} retries={budget.retries}.")
 
 
 if __name__ == "__main__":

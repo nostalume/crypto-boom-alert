@@ -6,6 +6,7 @@ import re
 import sys
 import time
 import uuid
+from datetime import datetime, timedelta
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
@@ -72,6 +73,8 @@ def watch(workspace, args):
             due = started + args.interval * 60
             if due <= time.monotonic():
                 due = time.monotonic() + args.interval * 60  # Skip missed ticks; never queue overlapping work.
+            next_at = datetime.now().astimezone() + timedelta(seconds=max(0, due - time.monotonic()))
+            scan.scan_log(f'Waiting: next run at local {next_at.isoformat(sep=" ", timespec="seconds")}; Ctrl+C or alert.py stop to cancel.')
             while time.monotonic() < due and not stopping(stop, token):
                 time.sleep(min(.25, max(0, due - time.monotonic())))
     finally:

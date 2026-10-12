@@ -55,6 +55,7 @@ class Budget:
                 and 0 < self.max_response <= 4 * 1024 * 1024 and 0 <= self.reserve < self.seconds <= 480):
             raise ValueError("Invalid bounded budget")
         self.started = self.clock()
+        self.last_success_at = None
         self.lock = threading.Lock()
         self.next_market = self.next_public = self.backoff_until = self.started
 
@@ -103,6 +104,8 @@ class Budget:
     def observe(self, record: dict):
         with self.lock:
             self.observations.append(record)
+            if record['status'] == 200 and record['failure'] is None:
+                self.last_success_at = self.clock()
 
 
 class PublicClient:
