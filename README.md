@@ -41,3 +41,26 @@ PYTHONPATH=src python -m crypto_boom.hourly_alert
 ```
 
 The 1-hour grain and 168-hour baseline are **provisional**, inspired by a published volume-shock example rather than optimized for large-move event recall. A proper comparison needs independent 20%/30% event definitions, alternative scan grains and baselines, out-of-time evaluation, alert lead time, false matches per day, and missed-event accounting. Public status should never be mistaken for a validated trading system.
+
+<!-- OKX_ALERT_START -->
+## 最近 OKX 告警 / Latest alerts
+
+源数据截止：2026-10-12 00:41:00 UTC。本批生成：2026-10-12 00:44:06 UTC / 上海 2026-10-12 08:44:06。
+仅记录价量异常；UP/DOWN 是观测方向，不是买卖建议。PERSISTENT 表示持续条件，不代表收益确认。
+本页不是实时扫描健康状态；无新告警不更新，扫描覆盖/失败请查看 Actions summary。
+
+展示顺序：及时项优先、同类持续项优先，再按币种分组；现货/永续保留独立事实，不是收益概率排名。
+
+| 币种分组 | 标的 | 市场 | 方向 | 规则 | 阶段 | 首次条件 | 本次条件 | 条件年龄 |
+|---|---|---|---|---|---|---|---|---|
+| GRASS | GRASS-USDT-SWAP | SWAP | DOWN | A0 | OBSERVED | 2026-10-12 00:37:00 UTC | 2026-10-12 00:37:00 UTC | 7m · 及时 / TIMELY |
+| GRASS | GRASS-USDT-SWAP | SWAP | UP | A0 | OBSERVED | 2026-10-12 00:40:00 UTC | 2026-10-12 00:40:00 UTC | 4m · 及时 / TIMELY |
+| ICP | ICP-USDT-SWAP | SWAP | DOWN | A0 | OBSERVED | 2026-10-12 00:39:00 UTC | 2026-10-12 00:39:00 UTC | 5m · 及时 / TIMELY |
+| ONDO | ONDO-USDT | SPOT | UP | A0 | OBSERVED | 2026-10-12 00:41:00 UTC | 2026-10-12 00:41:00 UTC | 3m · 及时 / TIMELY |
+| S | S-USDT-SWAP | SWAP | UP | A0 | OBSERVED | 2026-10-12 00:36:00 UTC | 2026-10-12 00:36:00 UTC | 8m · 及时 / TIMELY |
+| S | S-USDT-SWAP | SWAP | DOWN | A0 | OBSERVED | 2026-10-12 00:39:00 UTC | 2026-10-12 00:39:00 UTC | 5m · 及时 / TIMELY |
+| STRK | STRK-USDT-SWAP | SWAP | UP | A0 | OBSERVED | 2026-10-12 00:41:00 UTC | 2026-10-12 00:41:00 UTC | 3m · 及时 / TIMELY |
+| W | W-USDT-SWAP | SWAP | DOWN | A0 | OBSERVED | 2026-10-12 00:38:00 UTC | 2026-10-12 00:38:00 UTC | 6m · 及时 / TIMELY |
+
+<!-- OKX_ALERT_RECEIPT_V1:eyJhdHRlbXB0IjoxLCJiYXRjaCI6IjYzMTNhNTMzNWU5OGRlYTUwZGQ4ZjVhODhjMTk0OWZhNGU4MThjOGZmZjI0MWVhYTc3ZTAwMTNiOWNhYmQ5OTgiLCJnZW5lcmF0aW9uIjo2LCJpZHMiOlsiMWRlYzhiM2I2ZWFmMzYzMGQxZmI1NWM2ZDZhM2Q5ZDYyZDAyYTE4NDFjMmUwMThjMmE4OWMzYTU4OTU5ZWNhYiIsIjQ4NGZmZThmN2UyOGQ4NzkxM2I4YjZkYzM4OGFlNjYxZWRhM2NmNmMzMjczYjQ1MzEyMDVjYTYyOTJhODVmZTEiLCI0YzA4Y2ExYzdmOWNmMzFjMWQzMWMwYmNlNmY5MzIwNmMzM2E1Y2Q2NmRkZjlmMzJiODBjMGFmYzY2ODZkOWFkIiwiNmY4Y2Q4MTFkYmY1MDJhNmZjMmQwYWQ4ZTNiZmE1MGIzZjA2NDliMDEwMTM3YjdiNDMyZmY3N2M4MDJkZTExMSIsIjg3MGMzYjcyOGQxYzA1ZTY5OGEyNTFlOGMxNDIzYWYzMzY5MDUyMTU0NWExMzY4YmMwYjI3N2EzNGVmMDkzY2MiLCI5NzBkMWExYjNhNzAwY2NkOGY2MWUwNjE2ZDA3MDE3YWY2N2Y2YWMxNTAzODNkNDNlYzQyYWQ0MGM5ZmIwNjlhIiwiYjQ5NTk0NTk5NzA4MDkxY2I2MGZjNjI2MWFlNzgzZjVlM2MwNDNmOTZjYzg1NGU1OWQwNDgyNGZiZDgzYjQxOSIsImY3NDVmOWI2NDAwYTVhMmU4MWM0YjUzYTA1NjI4MmZmOWMzMjcyZjA0ZjM1NjUxNWJiZGRkYTM3NmM0NzRhNjMiXSwicHJlcGFyZWRfYXQiOjE3OTE3NjU2NjAwMDAsInJ1bGVzX3ZlcnNpb24iOiJva3gtYWxlcnQtdHJpYWwtdjEiLCJydW5faWQiOjM4MTg4OTQ5ODg1LCJzY2hlbWEiOiJva3gtcHVibGljLXJlY2VpcHQtdjEiLCJzY29wZSI6eyJyZWYiOiJyZWZzL2hlYWRzL21haW4iLCJyZXBvc2l0b3J5Ijoibm9zdGFsdW1lL2NyeXB0by1ib29tLWFsZXJ0Iiwid29ya2Zsb3dfaWQiOjM4MTI3MzE5M30sInNvdXJjZV9zaGEiOiJhY2UxMzg2NzA5NDk5Njg1ZGY3MGQ0NDY3NTc0YzM2YjAyY2I1MzM1In0= -->
+<!-- OKX_ALERT_END -->
