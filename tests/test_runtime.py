@@ -5,7 +5,7 @@ from pathlib import Path
 
 import httpx
 import pytest
-from test_stage3 import budget, response
+from test_data import budget, response
 from test_trial import PRODUCT, T, row, snapshot
 
 from crypto_boom import data as data

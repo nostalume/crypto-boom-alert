@@ -11,7 +11,7 @@ GitHub 定时任务可能延迟或漏触发，不承诺分钟级送达。
 仓库只保留一个生产 writer；不要另外启动修改 README 的行情脚本。
 
 首次启动：确认专用 cache 完整清单为空，手动 `preview rebuild=true` 建立状态。
-必要时用 `preview rebuild=false` 续接下载；这只是冷启动，不要求 24 小时观察。
+必要时用 `preview rebuild=false` 续接下载。
 核对前序独立 final 证明、完整池进度及无未决发布，再手动 `live` 提供其 `arm_manifest`。
 首次 live 成功后启用生产调度。后续 live 从已 armed final 续接，不重复填写 arm_manifest。
 
@@ -62,13 +62,15 @@ gh run view RUN_ID --repo nostalume/crypto-boom-alert --log
 依赖升级须显式执行 `uv lock --upgrade-package NAME` 并检查 diff、测试后再提交。
 CI 只执行离线检查，不扫描市场、不发布、不保存 cache/artifact。
 Actions 使用固定提交的官方 `astral-sh/setup-uv` 自动安装 uv 0.12.17，创建并激活 Python 3.12 环境；
-关闭依赖及 Python 的远程缓存，后续只运行已同步环境中的 `python -m`，不隐式重新解锁/安装。
+关闭依赖及 Python 的远程缓存；生产运行已同步环境中的 `python -m`，
+CI 使用 `uv run --locked --no-sync`，不重新解锁/安装。
 准备与发布两个 job 保留权限隔离；YAML anchors 仅复用完全相同的安装、额度检查和清理内容。
 Python 3.12 不在 runner 时可由 uv 下载，因此安装时延需线上实测，不承诺此次改动加速扫描。
 
-可选的有限 preview 输入 observation_start_ms、observation_end_ms、observation_digest 和离线 report 仍保留供诊断；
-它们不是上线前置。生产必须清空观察变量，不使用到期轮次作恢复基线。
+已移除早期有限观察窗口、自动自停和离线验收汇总；日常诊断只看本轮日志/summary。
 
 源码模块已去掉冗余前缀；workflow 路径及版本化缓存/回执标识保持不变。
-源码改名或删减会改变 cache 的代码摘要，不能直接续用旧摘要的缓存，
-也不能靠清空缓存跳过去重；发布这类变更前须完成保留账本的状态交接。
+普通源码更新不要求 cache 的源码摘要与当前代码相同；该字段保留用于来源追溯。
+兼容性由现有缓存封装版本、检查点格式及规则版本决定，行情分区由其自身格式版本判定。
+来源、文件校验、generation 和未决发布检查仍保留；原 v1 缓存无需改写 manifest 即可恢复。
+维护者只在持久化格式或规则/去重语义不兼容时更新对应版本并显式迁移；不能清空账本重发。

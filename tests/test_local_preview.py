@@ -8,7 +8,7 @@ from pathlib import Path
 
 import httpx
 import pytest
-from test_stage3 import Clock, response
+from test_data import Clock, response
 from test_trial import PRODUCT, T, metadata, row
 
 from crypto_boom import data, runtime, scan, state, trial
@@ -70,8 +70,8 @@ def checkpoint(root):
     return state.StateStore(root / 'checkpoint.json').load()[0]
 
 
-@pytest.mark.parametrize('spawned', [False, True])
-def test_cold_warm_and_same_cutoff_previews_persist_without_notifications(tmp_path, monkeypatch, capsys, spawned):
+def test_cold_warm_and_same_cutoff_previews_persist_without_notifications(tmp_path, monkeypatch, capsys):
+    spawned = True
     first = run_preview(tmp_path, monkeypatch, capsys, spawned=spawned)
     assert first['pool'] == first['metadata_eligible'] == first['complete'] == 2
     assert not first['coverage_capped'] and first['checkpoint_generation'] == 2

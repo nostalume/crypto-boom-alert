@@ -3,7 +3,7 @@ from dataclasses import asdict
 
 import httpx
 import pytest
-from test_stage3 import budget, response
+from test_data import budget, response
 from test_trial import PRODUCT, T, row
 
 from crypto_boom import data as data

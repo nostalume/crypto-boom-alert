@@ -19,19 +19,6 @@ name: OKX altcoin alert
         type: string
         default: ""
 
-      observation_start_ms:
-        description: Optional finite preview start (UTC epoch milliseconds); all three window inputs required
-        type: string
-        default: ""
-      observation_end_ms:
-        description: Exclusive preview end; at most 24 hours after start
-        type: string
-        default: ""
-      observation_digest:
-        description: Reviewed runtime plus workflow SHA256; not a Git head SHA
-        type: string
-        default: ""
-
 permissions: {}
 defaults:
   run:
@@ -47,9 +34,6 @@ env:
   REBUILD: ${{ inputs.rebuild || false }}
   ARM_MANIFEST: ${{ inputs.arm_manifest }}
   LIVE_ENABLED: ${{ vars.OKX_LIVE_ENABLED }}
-  OBSERVATION_START_MS: ${{ inputs.observation_start_ms || vars.OKX_OBSERVATION_START_MS }}
-  OBSERVATION_END_MS: ${{ inputs.observation_end_ms || vars.OKX_OBSERVATION_END_MS }}
-  OBSERVATION_DIGEST: ${{ inputs.observation_digest || vars.OKX_OBSERVATION_DIGEST }}
 
 jobs:
   prepare:
@@ -58,7 +42,7 @@ jobs:
     timeout-minutes: 15
     permissions:
       contents: read
-      actions: write # Exact own-cache cleanup and finite self-stop; no README permission.
+      actions: write # Exact own-cache cleanup; no README permission.
     outputs:
       has_intent: ${{ steps.scan.outputs.has_intent }}
       key: ${{ steps.scan.outputs.key }}
@@ -89,8 +73,6 @@ jobs:
           WORKROOT="$RUNNER_TEMP/okx-live"
           mkdir "$WORKROOT"
           timeout 30s gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" > "$WORKROOT/current.json"
-          python -m crypto_boom.live window --root "$WORKROOT"
-          if [[ $(jq -r '.status // "open"' "$WORKROOT/result.json" 2>/dev/null || printf open) != open ]]; then exit 0; fi
           workflow=$(jq -er '.workflow_id' "$WORKROOT/current.json")
           [[ "$workflow" =~ ^[1-9][0-9]*$ ]]
           timeout 30s gh api "repos/$GITHUB_REPOSITORY/actions/workflows/$workflow/runs?per_page=100" > "$WORKROOT/history.json"
@@ -98,7 +80,6 @@ jobs:
           timeout 30s gh api "repos/$GITHUB_REPOSITORY/actions/caches?key=okx-live-cache-v1-w$workflow-&per_page=100" > "$WORKROOT/caches.json" || printf '{}' > "$WORKROOT/caches.json"
           python -m crypto_boom.live select --root "$WORKROOT"
       - name: Read independent producer proof
-        if: steps.selected.outputs.window_open == 'true'
         id: proof
         env:
           GH_TOKEN: ${{ github.token }}
@@ -111,7 +92,7 @@ jobs:
           fi
           python -m crypto_boom.live admit --root "$WORKROOT"
       - name: Restore exact previous final
-        if: steps.selected.outputs.window_open == 'true' && steps.selected.outputs.restore_key != '' && steps.proof.outputs.persist != 'false'
+        if: steps.selected.outputs.restore_key != '' && steps.proof.outputs.persist != 'false'
         id: restored
         uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
@@ -119,7 +100,6 @@ jobs:
           key: ${{ steps.selected.outputs.restore_key }}
           fail-on-cache-miss: false # CLI permits only non-persisting preview diagnostics on a miss.
       - name: Scan and prepare bounded state
-        if: steps.selected.outputs.window_open == 'true'
         id: scan
         env:
           GH_TOKEN: ${{ github.token }}
@@ -170,22 +150,8 @@ jobs:
           timeout 30s gh api "repos/$GITHUB_REPOSITORY/actions/caches?key=okx-live-cache-v1-w$workflow-&per_page=100" > "$WORKROOT/caches.json"
           python -m crypto_boom.live finish --root "$WORKROOT"
       - name: Show scan coverage and notification disposition
-        id: disposition
         if: always()
         run: python -m crypto_boom.live summary --root "$RUNNER_TEMP/okx-live"
-      - name: Stop only this finite observation workflow
-        if: always() && steps.disposition.outputs.stop_workflow_id != ''
-        env:
-          GH_TOKEN: ${{ github.token }}
-          STOP_WORKFLOW_ID: ${{ steps.disposition.outputs.stop_workflow_id }}
-        run: |
-          [[ "$MODE" == preview && "$STOP_WORKFLOW_ID" =~ ^[1-9][0-9]*$ ]]
-          path=$(timeout 30s gh api "repos/$GITHUB_REPOSITORY/actions/workflows/$STOP_WORKFLOW_ID" --jq .path)
-          [[ "$path" == .github/workflows/okx-live.yml ]]
-          timeout 30s gh api -X PUT "repos/$GITHUB_REPOSITORY/actions/workflows/$STOP_WORKFLOW_ID/disable"
-          state=$(timeout 30s gh api "repos/$GITHUB_REPOSITORY/actions/workflows/$STOP_WORKFLOW_ID" --jq .state)
-          [[ "$state" == disabled_manually ]]
-
 
   consume:
     needs: prepare

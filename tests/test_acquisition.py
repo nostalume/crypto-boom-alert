@@ -6,7 +6,7 @@ from types import SimpleNamespace
 
 import httpx
 import pytest
-from test_stage3 import budget, response
+from test_data import budget, response
 from test_trial import PRODUCT, T, row
 
 from crypto_boom import data as data
@@ -70,25 +70,25 @@ def fixture(count, *, qualified=(), complete_hours=False, previous=T - 10 * tria
     checkpoint = state.Checkpoint(at=previous)
     for p in products:
         checkpoint.tracker.last_at[("A0", p.key)] = previous
+    minute_by_id = {product.inst_id: minute[product.key] for product in products}
     calls, lock = [], threading.Lock()
     def handle(request):
         kind, inst_id = request.url.params["bar"], request.url.params["instId"]
         with lock:
             calls.append((kind, inst_id))
         g = {"1m": trial.MINUTE, "5m": trial.FIVE, "1H": trial.HOUR}[kind]
-        rows = minute[next(p.key for p in products if p.inst_id == inst_id)] if g == trial.MINUTE else common[g]
+        rows = minute_by_id[inst_id] if g == trial.MINUTE else common[g]
         end, limit = int(request.url.params["after"]), int(request.url.params["limit"])
         return response([r for r in reversed(rows) if int(r[0]) < end][:limit])
     return products, cache, checkpoint, calls, handle, minute, common
 
 
-@pytest.mark.parametrize("workers", [4, 8])
-def test_1000_hour_boundary_covers_mandatory_pool_in_existing_budget(workers):
+def test_1000_hour_boundary_covers_mandatory_pool_in_existing_budget():
     products, cache, checkpoint, calls, handle, _, _ = fixture(1000)
     b, _ = budget()
     for _ in range(3):  # Clock and two metadata requests share the real CLI budget.
         b.admit("/api/v5/public/time")
-    report = scan(products, T, cache, checkpoint, b, workers=workers, transport=httpx.MockTransport(handle))
+    report = scan(products, T, cache, checkpoint, b, workers=4, transport=httpx.MockTransport(handle))
     assert report["coverage_contract"] == "a0-mandatory-v2"
     assert report["complete"] == 1000 and report["partial"] == report["deferred"] == 0
     assert b.attempts == 2003 and all(kind != "1H" for kind, _ in calls)
@@ -109,7 +109,7 @@ def test_optional_hour_starts_only_after_all_mandatory_and_preserves_events():
         for at in range(previous + trial.MINUTE, T + trial.MINUTE, trial.MINUTE):
             changes.extend(expected.apply(detector.evaluate(at)[0]))
     b, _ = budget()
-    report = scan(products, T, cache, checkpoint, b, transport=httpx.MockTransport(handle))
+    report = scan(products, T, cache, checkpoint, b, workers=8, transport=httpx.MockTransport(handle))
     assert len(calls) == 18 and all(kind != "1H" for kind, _ in calls[:16])
     assert calls[16:] == [("1H", products[i].inst_id) for i in (0, 3)]
     assert report["hour_context_counts"] == {"refreshed": 2, "not_requested": 6}

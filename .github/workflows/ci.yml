@@ -3,7 +3,7 @@ name: Offline checks
 "on":
   pull_request:
     branches: [main]
-    paths: ["src/**", "tests/**", "pyproject.toml", "uv.lock", ".github/workflows/**"]
+    paths: ["alert.py", "src/**", "tests/**", "pyproject.toml", "uv.lock", ".github/workflows/**"]
   workflow_dispatch:
 
 permissions:
@@ -21,7 +21,6 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
-      PYTHONPATH: src
       PYTHONDONTWRITEBYTECODE: "1"
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -38,11 +37,11 @@ jobs:
         run: uv sync --locked --no-cache --no-python-downloads
       - name: Offline regression
         id: tests
-        run: python -m pytest -q -p no:cacheprovider --basetemp "$RUNNER_TEMP/offline-tests"
+        run: uv run --locked --no-sync pytest -q -p no:cacheprovider --basetemp "$RUNNER_TEMP/offline-tests"
       - name: Static checks
         id: lint
         if: success() || failure()
-        run: python -m ruff check --no-cache --select F,I,RUF100 src tests
+        run: uv run --locked --no-sync ruff check --no-cache --select F,I,RUF100 alert.py src tests
       - name: Show check disposition
         if: always()
         env:

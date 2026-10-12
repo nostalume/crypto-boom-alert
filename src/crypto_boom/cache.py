@@ -54,6 +54,7 @@ def _positive(value):
 
 
 def code_digest():
+    """Source provenance, not a state format version."""
     files = sorted(Path(__file__).parent.glob('*.py'))
     return digest(_json({p.name: digest(p.read_bytes().replace(b'\r\n', b'\n')) for p in files}))
 
@@ -122,7 +123,7 @@ def _validated_bundle(bundle: Path, *, scope: Scope, source_sha: str, run_id: in
     if (not isinstance(body, dict) or set(body) != fields or body['schema'] != WIRE
             or body['rules_version'] != VERSION or body['scope'] != asdict(scope)
             or body['source_sha'] != source_sha or type(body['run_id']) is not int or body['run_id'] != run_id
-            or type(body['attempt']) is not int or body['attempt'] != 1 or body['code_sha256'] != code_digest()
+            or type(body['attempt']) is not int or body['attempt'] != 1 or not _sha(body['code_sha256'])
             or type(body['created_at']) is not int or type(body['expires_at']) is not int
             or not 0 <= body['created_at'] <= now < body['expires_at'] == body['created_at'] + DAY
             or not _positive(body['generation']) or type(body['at']) is not int

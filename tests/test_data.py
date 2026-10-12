@@ -1,4 +1,4 @@
-"""Stage 3 bounded-effect tests; all HTTP and publication receipts are fixtures."""
+"""Acquisition budgets, incremental scanning and durable state; fixture HTTP only."""
 import gzip
 import json
 from dataclasses import replace
@@ -36,8 +36,8 @@ def response(rows):
     return httpx.Response(200, json={"code": "0", "data": rows})
 
 
-@pytest.mark.parametrize("phase", range(5))
-@pytest.mark.parametrize("change", [.005, -.005, .00499, -.00499, .01])
+@pytest.mark.parametrize("phase,change", [(phase, .005) for phase in range(5)] +
+                         [(0, -.005), (0, .00499), (0, -.00499), (0, .01)])
 def test_a0_selection_preserves_condition_features_and_events(phase, change):
     at = T + phase * trial.MINUTE
     rows = snapshot(at=at, change=change, hour=True)

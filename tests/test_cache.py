@@ -23,6 +23,8 @@ def origin(root, status=None):
         ids = state.prepare([Transition((VERSION + '/A0', ('okx', 'SPOT', 'BTC-USDT'), 'UP', T), 'OBSERVED', T)], T)
         if status == 'unknown':
             state.unknown(ids)
+        elif status == 'confirmed':
+            state.reconcile(ids, state.ledger[ids[0]]['batch'])
         with store.writer():
             store.save(state, 1)
     (root / 'market').mkdir()
@@ -40,16 +42,19 @@ def authority(result):
     return dict(scope=SCOPE, source_sha=SOURCE, run_id=10, manifest_sha256=result['manifest_sha256'], now=T + 2000)
 
 
-@pytest.mark.parametrize('status', [None, 'pending', 'unknown'])
-def test_round_trip_preserves_state_and_unresolved_ledger_but_never_enables_notifications(tmp_path, status):
+@pytest.mark.parametrize('status', [None, 'confirmed', 'pending', 'unknown'])
+def test_cross_revision_round_trip_keeps_ledger_without_enabling_notifications(tmp_path, monkeypatch, status):
     expected, result = sealed(tmp_path, status)
+    original = (tmp_path / 'bundle/checkpoint.json').read_bytes()
+    monkeypatch.setattr(cache, 'code_digest', lambda: 'b' * 64)
     observed = cache.restore(tmp_path / 'bundle', tmp_path / 'restored', **authority(result))
     state, reason = StateStore(tmp_path / 'restored/checkpoint.json').load()
     assert reason == 'state_hit' and not state.notifications_enabled
+    assert (tmp_path / 'bundle/checkpoint.json').read_bytes() == original
     assert state.generation == expected.generation and state.cursor == 23 and state.at == T
     assert cache._json(state.ledger) == cache._json(expected.ledger)
     assert state.tracker.last_at == expected.tracker.last_at
-    assert observed['unresolved_entries'] == len(expected.ledger)
+    assert observed['unresolved_entries'] == sum(item['status'] != 'confirmed' for item in expected.ledger.values())
     assert observed['publication'] == 'disabled'
     assert not (tmp_path / 'restored/checkpoint.json.lock').exists()
     with pytest.raises(Unavailable):
@@ -62,7 +67,7 @@ def test_round_trip_preserves_state_and_unresolved_ledger_but_never_enables_noti
 
 @pytest.mark.parametrize('variant', ['missing', 'digest', 'scope', 'source', 'run', 'expired', 'future',
                                     'checkpoint', 'partition', 'extra', 'missing_file', 'generation',
-                                    'code', 'attempt', 'traversal', 'size', 'duplicate_json'])
+                                    'code', 'schema', 'rules_version', 'attempt', 'traversal', 'size', 'duplicate_json'])
 def test_unadmitted_bundle_never_creates_recovered_state(tmp_path, variant):
     _, result = sealed(tmp_path)
     bundle, target = tmp_path / 'bundle', tmp_path / 'unused'
@@ -94,7 +99,9 @@ def test_unadmitted_bundle_never_creates_recovered_state(tmp_path, variant):
         if variant in ('generation', 'attempt'):
             body[variant] = 50
         elif variant == 'code':
-            body['code_sha256'] = '0' * 64
+            body['code_sha256'] = 'not-a-sha256'
+        elif variant in ('schema', 'rules_version'):
+            body[variant] = 'unsupported-v999'
         elif variant == 'traversal':
             body['files']['../outside'] = body['files'].pop('checkpoint.json')
         elif variant == 'size':

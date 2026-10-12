@@ -131,7 +131,8 @@ uv run --locked ruff check --no-cache --select F,I,RUF100 alert.py src tests
 依赖以 `pyproject.toml + uv.lock` 为唯一来源；Python 3.12/3.13，非打包项目。
 生产只安装运行依赖，CI 安装 dev 组。更新依赖须显式更新并检查 lock，不在运行时自动升级。
 上述命令自动准备 dev 组，测试导入路径由项目配置管理。无需单独运行 Python。
-本地源码改动会改变云端缓存代码摘要；未经保留账本的状态交接，不应直接推送替换生产。
+普通源码更新按现有格式/规则版本续用兼容缓存，不要求源码摘要相同；摘要仅用于追溯。
+只有持久化格式、告警规则或去重身份不兼容时才需要显式迁移，不能清空账本重发。
 
 <!-- OKX_ALERT_START -->
 ## 最近 OKX 告警 / Latest alerts
