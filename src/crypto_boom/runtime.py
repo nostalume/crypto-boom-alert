@@ -9,7 +9,7 @@ import math
 import multiprocessing
 import time
 
-from .okx_trial import Unavailable
+from .trial import Unavailable
 
 
 class DeadlineExceeded(Unavailable):

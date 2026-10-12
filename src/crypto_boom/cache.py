@@ -4,28 +4,21 @@ The workflow owns authenticated GET/cache operations. Exact producer identity an
 manifest SHA must come from outside the restored cache. Cache is evictable, never
 an authority to re-enable notifications or infer that a message was not sent.
 """
-import argparse
 import json
-import os
 import re
-import time
 from dataclasses import asdict
 from pathlib import Path
 
-from crypto_boom.okx_benchmark import benchmark, measure_scan, read_scan_report
-from crypto_boom.okx_state import StateStore, atomic_write
-from crypto_boom.okx_storage import DAY, GIB, MIB, Scope, digest
-from crypto_boom.okx_trial import VERSION, Unavailable
+from crypto_boom.state import StateStore, atomic_write
+from crypto_boom.storage import DAY, GIB, MIB, Scope, digest
+from crypto_boom.trial import VERSION, Unavailable
 
-PREFIX = 'okx-stage3-cache-v1-'
 WIRE = 'okx-shadow-cache-v1'
 PAYLOAD_LIMIT = 96 * MIB
 MANIFEST_LIMIT = 256 * 1024
 FILE = re.compile(r'market/[0-9a-f]{64}\.json\.gz|checkpoint\.json')
 REPO = 'nostalume/crypto-boom-alert'
 REPO_ID = 1391009742
-WORKFLOW = '.github/workflows/okx-cache-acceptance.yml'
-NOTIFICATION_WORKFLOW = '.github/workflows/okx-notification-acceptance.yml'
 LIVE_PREFIX = 'okx-live-cache-v1-'
 
 
@@ -61,14 +54,15 @@ def _positive(value):
 
 
 def code_digest():
-    files = sorted(Path(__file__).parent.glob('okx_*.py'))
+    files = sorted(Path(__file__).parent.glob('*.py'))
     return digest(_json({p.name: digest(p.read_bytes().replace(b'\r\n', b'\n')) for p in files}))
 
 
 def cache_key(run_id, source_sha):
+    """Stable bundle provenance label, not the native live cache lookup key."""
     if not _positive(run_id) or not _sha(source_sha, 40):
         raise ValueError('cache_producer_identity')
-    return f'{PREFIX}r{run_id}-a1-{source_sha}'
+    return f'okx-stage3-cache-v1-r{run_id}-a1-{source_sha}'
 
 
 def seal(workspace: Path, target: Path, *, scope: Scope, source_sha: str, run_id: int, created_at: int):
@@ -296,149 +290,3 @@ def retention(bundle, body, usage, *, previous_key=None, scope, source_sha, run_
     if any(v['status'] != 'confirmed' for v in state.ledger.values()):
         raise Unavailable('live_retention_unresolved_publication')
     return tuple(records[k] for k in (intent_key, previous_key) if k in records)
-
-
-def admission(mode, current, producer, usage, *, run_id, source_sha, producer_id=0, producer_sha='', expected_digest='',
-              workflow_path=WORKFLOW):
-    """Admit authenticated workflow-owned JSON, not self-reported cache metadata."""
-    if (workflow_path not in (WORKFLOW, NOTIFICATION_WORKFLOW)
-            or mode not in ('bootstrap', 'restore') or not _positive(run_id) or not _sha(source_sha, 40)
-            or not isinstance(usage, dict) or type(usage.get('active_caches_size_in_bytes')) is not int
-            or not 0 <= usage['active_caches_size_in_bytes'] <= 8 * GIB
-            or type(usage.get('active_caches_count')) is not int or usage['active_caches_count'] < 0
-            or usage.get('full_name') != REPO):
-        raise ValueError('cache_free_admission_denied')
-    for run, identity, source in [(current, run_id, source_sha), *([(producer, producer_id, producer_sha)] if mode == 'restore' else [])]:
-        if (not isinstance(run, dict) or type(run.get('id')) is not int or run['id'] != identity
-                or not _positive(run.get('workflow_id')) or run.get('path') != workflow_path
-                or run.get('event') != 'workflow_dispatch' or run.get('run_attempt') != 1
-                or type(run.get('run_attempt')) is not int or run.get('head_branch') != 'main'
-                or run.get('head_sha') != source or not _sha(source, 40)
-                or not isinstance(run.get('repository'), dict) or not isinstance(run.get('head_repository'), dict)
-                or run['repository'].get('id') != REPO_ID or run['head_repository'].get('id') != REPO_ID
-                or run.get('pull_requests') != []):
-            raise ValueError('cache_untrusted_run')
-    if mode == 'restore' and (not _positive(producer_id) or producer_id == run_id or not _sha(expected_digest)
-            or producer.get('workflow_id') != current['workflow_id'] or producer.get('status') != 'completed'
-            or producer.get('conclusion') != 'success'):
-        raise ValueError('cache_producer_not_accepted')
-    if mode == 'bootstrap' and (producer_id or producer_sha or expected_digest):
-        raise ValueError('cache_bootstrap_must_be_fresh')
-    return Scope(REPO, current['workflow_id'], 'refs/heads/main')
-
-
-def fault_checks(bundle, root, authority):
-    outcomes = {}
-    for name, path, change in [('missing', root / 'missing', {}), ('wrong_digest', bundle, {'manifest_sha256': '0' * 64}),
-                              ('wrong_source', bundle, {'source_sha': '0' * 40}),
-                              ('expired', bundle, {'now': authority['now'] + DAY})]:
-        target = root / ('fault-' + name)
-        try:
-            restore(path, target, **{**authority, **change})
-        except (ValueError, OSError):
-            if target.exists():
-                raise ValueError('fault_created_state_before_admission')
-            outcomes[name] = 'blocked_without_state'
-        else:
-            raise ValueError('fault_did_not_block')
-    # Exact hash protects corrupted bytes even if a marker/metadata looks valid.
-    bad = root / 'bad-bundle'
-    bad.mkdir()
-    (bad / 'market').mkdir()
-    (bad / 'manifest.json').write_bytes((bundle / 'manifest.json').read_bytes())
-    (bad / 'checkpoint.json').write_bytes(b'corrupted')
-    try:
-        restore(bad, root / 'fault-corrupt', **authority)
-    except (ValueError, OSError):
-        outcomes['corrupt'] = 'blocked_without_state'
-    else:
-        raise ValueError('corrupt_did_not_block')
-    # Missing state and unknown outcomes cannot prepare messages (existing owner).
-    from crypto_boom.okx_state import Checkpoint
-    from crypto_boom.okx_trial import Transition
-    checkpoint = Checkpoint(generation=1, at=authority['now'] // 60000 * 60000, notifications_enabled=True)
-    transition = Transition((VERSION + '/A0', ('okx', 'SPOT', 'FAULT-USDT'), 'UP', checkpoint.at), 'OBSERVED', checkpoint.at)
-    ids = checkpoint.prepare([transition], checkpoint.at)
-    for name in ('pending', 'unknown'):
-        if name == 'unknown':
-            checkpoint.unknown(ids)
-        try:
-            checkpoint.prepare([transition], checkpoint.at)
-        except Unavailable:
-            outcomes[name] = 'publication_blocked'
-        else:
-            raise ValueError('unresolved_did_not_block')
-    return outcomes
-
-
-def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('operation', choices=('admit', 'run'))
-    parser.add_argument('--root', type=Path, required=True)
-    args = parser.parse_args()
-    root = args.root
-    mode = os.environ['CACHE_MODE']
-    run_id, source_sha = int(os.environ['GITHUB_RUN_ID']), os.environ['GITHUB_SHA']
-    producer_id = int(os.environ.get('PRODUCER_RUN') or '0')
-    producer_sha, expected_digest = os.environ.get('PRODUCER_SHA', ''), os.environ.get('BUNDLE_DIGEST', '')
-    if (os.environ.get('GITHUB_REPOSITORY') != REPO or os.environ.get('GITHUB_REF') != 'refs/heads/main'
-            or os.environ.get('GITHUB_EVENT_NAME') != 'workflow_dispatch' or os.environ.get('GITHUB_RUN_ATTEMPT') != '1'):
-        raise ValueError('cache_workflow_context')
-    current = json.loads(_read(root / 'current.json', MIB))
-    producer = json.loads(_read(root / 'producer.json', MIB)) if mode == 'restore' else None
-    usage = json.loads(_read(root / 'usage.json', MIB))
-    scope = admission(mode, current, producer, usage, run_id=run_id, source_sha=source_sha,
-                      producer_id=producer_id, producer_sha=producer_sha, expected_digest=expected_digest)
-    if args.operation == 'admit':
-        restore_key = cache_key(producer_id, producer_sha) if mode == 'restore' else 'unused-bootstrap'
-        with open(os.environ['GITHUB_OUTPUT'], 'a', encoding='utf-8') as out:
-            out.write(f'save_key={cache_key(run_id, source_sha)}\nrestore_key={restore_key}\n')
-        return
-    report = {'schema': 'okx-cache-acceptance-v1', 'mode': mode, 'publication': 'disabled', 'rounds': []}
-    workspace = root / 'scan'
-    if mode == 'bootstrap':
-        result = benchmark(workspace, rounds=3, limit=1000, workers=4)
-        report['rounds'] = result['rounds']
-        last = result['rounds'][-1]
-        if last['coverage_capped'] or last['partial'] or last['deferred']:
-            raise ValueError('cache_bootstrap_not_complete')
-    else:
-        if os.environ.get('CACHE_HIT') != 'true':
-            raise ValueError('cache_exact_restore_required')
-        # Restore/save action cache versions include paths: keep transfer as the
-        # exported path in BOTH runs, preserve the incoming immutable bundle here.
-        incoming = root / 'incoming'
-        transfer = root / 'transfer'
-        if (transfer.is_symlink() or not transfer.is_dir() or incoming.exists() or incoming.is_symlink()
-                or transfer.parent.resolve() != root.resolve() or incoming.parent.resolve() != root.resolve()):
-            raise ValueError('cache_transfer_directory_required')
-        transfer.rename(incoming)
-        authority = dict(scope=scope, source_sha=producer_sha, run_id=producer_id,
-                         manifest_sha256=expected_digest, now=int(time.time() * 1000))
-        started = time.monotonic()
-        report['restore'] = restore(incoming, workspace, **authority)
-        report['restore_validation_seconds'] = time.monotonic() - started
-        report['faults'] = fault_checks(incoming, root, authority)
-        previous_generation, previous_at, previous_token = report['restore']['generation'], report['restore']['at'], None
-        for number in range(1, 3):
-            metrics = measure_scan(workspace, number, 1000, 4)
-            if metrics['exit_code'] != 0:
-                raise ValueError('cache_warm_scan_failed')
-            summary, token = read_scan_report(workspace, previous_token)
-            raw = json.loads(_read(workspace / 'scan-report.json', 16 * MIB))
-            misses = sum(p.get('cache') != 'cache_hit' for p in raw['products'] if p['status'] not in ('warmup', 'already_evaluated'))
-            if (summary['coverage_capped'] or summary['partial'] or summary['deferred'] or misses
-                    or summary['already_evaluated'] or summary['at'] <= previous_at
-                    or summary['state_generation'] != previous_generation + 1 or metrics['wall_seconds'] >= 600):
-                raise ValueError('cache_not_complete_advancing_warm_under_10_minutes')
-            report['rounds'].append({**metrics, **summary, 'cold_products': misses})
-            previous_generation, previous_at, previous_token = summary['state_generation'], summary['at'], token
-    report['sealed'] = seal(workspace, root / 'transfer', scope=scope, source_sha=source_sha,
-                            run_id=run_id, created_at=int(time.time() * 1000))
-    report['limits'] = ['cache_is_evictable', 'no_automatic_notification_enable', 'no_p95_or_24h_claim']
-    atomic_write(root / 'acceptance-report.json', _json(report))
-    print('CACHE_ACCEPTANCE=' + _json(report).decode(), flush=True)
-
-
-if __name__ == '__main__':
-    main()

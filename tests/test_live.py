@@ -11,16 +11,16 @@ from pathlib import Path
 
 import httpx
 import pytest
-import test_okx_publish as provider
+import test_publish as provider
 import yaml
 
-from crypto_boom import okx_cache as cache
-from crypto_boom import okx_live as live
-from crypto_boom import okx_runtime as runtime
-from crypto_boom import okx_scan as scanner
-from crypto_boom.okx_state import Checkpoint, StateStore
-from crypto_boom.okx_storage import DAY, GIB, Scope, digest
-from crypto_boom.okx_trial import MINUTE, Product, Unavailable
+from crypto_boom import cache as cache
+from crypto_boom import live as live
+from crypto_boom import runtime as runtime
+from crypto_boom import scan as scanner
+from crypto_boom.state import Checkpoint, StateStore
+from crypto_boom.storage import DAY, GIB, Scope, digest
+from crypto_boom.trial import MINUTE, Product, Unavailable
 
 T, SOURCE = provider.T, provider.SOURCE
 NOW = T + MINUTE + 3000
@@ -114,9 +114,6 @@ def fixture(tmp_path, monkeypatch):
     write(root, 'history.json', {'total_count': 2, 'workflow_runs': [read(root, 'current.json'), run(1)]})
     write(root, 'usage.json', {'full_name': cache.REPO, 'active_caches_size_in_bytes': 0, 'active_caches_count': 0})
     write(root, 'caches.json', listing())
-    write(root, 'legacy.json', {'id': 99, 'path': live.LEGACY, 'state': 'disabled_manually'})
-    for status in live.ACTIVE:
-        write(root, 'legacy-' + status + '.json', {'total_count': 0, 'workflow_runs': []})
     write(root, 'target-ref.json', {'ref': SCOPE.ref, 'object': {'type': 'commit', 'sha': provider.HEAD}})
     write(root, 'target-readme.json', {'type': 'file', 'path': 'README.md', 'encoding': 'base64',
                                      'content': base64.b64encode(provider.README).decode(),
@@ -197,8 +194,7 @@ def prepared(fixture, monkeypatch, *, enabled=False, approve=False, signal=False
 def consumer(root, monkeypatch):
     fresh = root.parent / 'consume'
     fresh.mkdir()
-    for name in ('current.json', 'history.json', 'usage.json', 'target-ref.json', 'target-readme.json', 'legacy.json',
-                 *('legacy-' + s + '.json' for s in live.ACTIVE)):
+    for name in ('current.json', 'history.json', 'usage.json', 'target-ref.json', 'target-readme.json'):
         shutil.copyfile(root / name, fresh / name)
     shutil.copytree(root / 'transfer', fresh / 'transfer')
     proof = read(root, 'export.json')
@@ -251,7 +247,7 @@ def test_live_native_handoff_publish_once_confirmed_final_and_repeat(fixture, mo
     assert read(fresh, 'result.json')['commit'] == provider.COMMIT
 
 
-@pytest.mark.parametrize('variant', ['gate', 'legacy', 'legacy_active', 'legacy_unknown', 'missing_head',
+@pytest.mark.parametrize('variant', ['gate', 'missing_head',
                                     'changed_head', 'missing_readback', 'wrong_digest', 'wrong_checkpoint',
                                     'unknown_provider', 'source_repo_private'])
 def test_consumer_failure_never_retries_or_pretends_confirmed(fixture, monkeypatch, variant):
@@ -259,11 +255,6 @@ def test_consumer_failure_never_retries_or_pretends_confirmed(fixture, monkeypat
     fresh = consumer(root, monkeypatch)
     if variant == 'gate':
         monkeypatch.setenv('LIVE_ENABLED', 'false')
-    elif variant == 'legacy':
-        write(fresh, 'legacy.json', {'id': 99, 'path': live.LEGACY, 'state': 'active'})
-    elif variant in ('legacy_active', 'legacy_unknown'):
-        write(fresh, 'legacy-queued.json', {'total_count': 1 if variant == 'legacy_active' else False,
-                                          'workflow_runs': [run(1)] if variant == 'legacy_active' else []})
     elif variant == 'missing_head':
         monkeypatch.delenv('TARGET_HEAD')
     elif variant == 'changed_head':
@@ -438,7 +429,7 @@ def test_production_workflow_has_bounded_schedule_and_no_inline_untrusted_code()
                     paths.add(step['with']['path'])
                     assert 'restore-keys' not in step['with']
             else:
-                assert '${{' not in step['run'] and step['shell'] == 'bash'
+                assert '${{' not in step['run'] and step.get('shell', value['defaults']['run']['shell']) == 'bash'
     assert len(paths) == 1
     assert 'pytest' not in raw and 'requirements-dev' not in raw and 'upload-artifact' not in raw
 
@@ -447,7 +438,7 @@ def test_actual_cli_select_and_admit_across_processes_use_independent_jobs(fixtu
     root, seed, _ = fixture
     seed()
     for phase in ('select', 'admit'):
-        proc = subprocess.run([sys.executable, '-B', '-m', 'crypto_boom.okx_live', phase, '--root', str(root)],
+        proc = subprocess.run([sys.executable, '-B', '-m', 'crypto_boom.live', phase, '--root', str(root)],
                               env={**os.environ, 'PYTHONDONTWRITEBYTECODE': '1'}, capture_output=True, text=True, timeout=30)
         assert proc.returncode == 0, proc.stderr
     assert read(root, 'selection.json')['proof']['at'] == T
@@ -481,7 +472,7 @@ def test_actual_export_is_next_runner_predecessor_without_replaying_confirmed_in
     proof = read(previous_consumer, 'export.json')
     next_root = root.parent / 'next-runner'
     next_root.mkdir()
-    for name in ('usage.json', 'legacy.json', *('legacy-' + s + '.json' for s in live.ACTIVE)):
+    for name in ('usage.json',):
         shutil.copyfile(root / name, next_root / name)
     write(next_root, 'current.json', run(3, status='in_progress', conclusion=None))
     write(next_root, 'history.json', {'total_count': 3, 'workflow_runs': [read(next_root, 'current.json'), run(2), run(1)]})
@@ -531,7 +522,7 @@ def test_summary_stdout_and_ui_match_and_do_not_require_result(fixture, monkeypa
     root, _, _ = fixture
     summary = root / 'summary.md'
     monkeypatch.setenv('GITHUB_STEP_SUMMARY', str(summary))
-    monkeypatch.setattr(sys, 'argv', ['okx_live', 'summary', '--root', str(root)])
+    monkeypatch.setattr(sys, 'argv', ['live', 'summary', '--root', str(root)])
     for result in ({'status': 'blocked_or_failed_before_result'}, {'mode': 'preview', 'publication': 'not_sent'}):
         if 'mode' in result:
             write(root, 'result.json', result)
@@ -684,12 +675,12 @@ def test_window_scan_failure_stops_only_authenticated_candidate(fixture, monkeyp
     root, _, _ = fixture
     window_env(monkeypatch)
     monkeypatch.setenv('GITHUB_STEP_SUMMARY', str(root / 'summary.md'))
-    monkeypatch.setattr(sys, 'argv', ['okx_live', 'summary', '--root', str(root)])
+    monkeypatch.setattr(sys, 'argv', ['live', 'summary', '--root', str(root)])
     live.main()
     assert 'stop_workflow_id=456' in (root.parent / 'outputs').read_text()
     body = read(root, 'current.json')
     body['workflow_id'] = 999
-    body['path'] = live.LEGACY
+    body['path'] = '.github/workflows/other.yml'
     write(root, 'current.json', body)
     (root.parent / 'outputs').write_text('')
     with pytest.raises(ValueError, match='untrusted_run'):
@@ -735,11 +726,11 @@ def test_optional_finite_preview_keeps_stop_permission_scope_unchanged():
 def test_startup_gate_does_not_require_not_yet_fetched_live_fences(fixture, monkeypatch):
     root, _, _ = fixture
     monkeypatch.setenv('MODE', 'live')
-    (root / 'legacy.json').unlink()
     live.window_gate(root, now=NOW)
     assert 'window_open=true' in (root.parent / 'outputs').read_text()
-    # Only admission is open; the real select still requires fresh writer fences.
-    with pytest.raises(ValueError, match='cache_regular_file_required'):
+    # Startup admission precedes the production operator gate.
+    monkeypatch.setenv('LIVE_ENABLED', 'false')
+    with pytest.raises(Unavailable, match='live_operator_gate_required'):
         live.select(root)
 
 
@@ -770,7 +761,7 @@ def test_window_fingerprint_freezes_workflow_not_readme_and_normalizes_lf(tmp_pa
     workflow = tmp_path / live.WORKFLOW
     workflow.parent.mkdir(parents=True)
     workflow.write_bytes(b'name: finite\n')
-    monkeypatch.setattr(live, '__file__', str(tmp_path / 'src/crypto_boom/okx_live.py'))
+    monkeypatch.setattr(live, '__file__', str(tmp_path / 'src/crypto_boom/live.py'))
     monkeypatch.setattr(cache, 'code_digest', lambda: 'b' * 64)
     fingerprint = live.observation_digest()
     workflow.write_bytes(b'name: finite\r\n')

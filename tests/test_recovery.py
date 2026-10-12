@@ -3,13 +3,13 @@ from dataclasses import asdict
 
 import httpx
 import pytest
-from test_okx_stage3 import budget, response
-from test_okx_trial import PRODUCT, T, row
+from test_stage3 import budget, response
+from test_trial import PRODUCT, T, row
 
-from crypto_boom import okx_data as data
-from crypto_boom import okx_state as state
-from crypto_boom import okx_trial as trial
-from crypto_boom.okx_scan import scan
+from crypto_boom import data as data
+from crypto_boom import state as state
+from crypto_boom import trial as trial
+from crypto_boom.scan import scan
 
 
 def native_source(at):
@@ -153,7 +153,7 @@ def test_repair_end_keeps_latest_tail_and_uses_real_cutoff_for_history_endpoint(
 
 
 def test_optional_interrupted_hour_cache_does_not_change_a0_checkpoint():
-    from test_okx_acquisition import fixture
+    from test_acquisition import fixture
     products, cache, checkpoint, _, handle, _, _ = fixture(1, qualified={0})
     product = products[0]
     saved = cache.snapshots[product.key]
@@ -172,7 +172,7 @@ def test_optional_interrupted_hour_cache_does_not_change_a0_checkpoint():
 
 
 def test_empty_source_and_existing_conflicts_are_not_invented_or_overwritten(tmp_path):
-    from crypto_boom.okx_scan import _refresh_series
+    from crypto_boom.scan import _refresh_series
     old = trial.Series.parse([row(T - trial.FIVE, 100), row(T - trial.FIVE, 101)], trial.FIVE)
     b, _ = budget(max_requests=4)
     with data.PublicClient(b, transport=httpx.MockTransport(lambda _: response([]))) as client:

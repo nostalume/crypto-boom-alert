@@ -5,14 +5,14 @@ from pathlib import Path
 
 import httpx
 import pytest
-from test_okx_stage3 import budget, response
-from test_okx_trial import PRODUCT, T, row, snapshot
+from test_stage3 import budget, response
+from test_trial import PRODUCT, T, row, snapshot
 
-from crypto_boom import okx_data as data
-from crypto_boom import okx_runtime as runtime
-from crypto_boom import okx_state as state
-from crypto_boom import okx_trial as trial
-from crypto_boom.okx_scan import scan
+from crypto_boom import data as data
+from crypto_boom import runtime as runtime
+from crypto_boom import state as state
+from crypto_boom import trial as trial
+from crypto_boom.scan import scan
 
 
 def _blocking_http(marker):
@@ -191,17 +191,17 @@ def test_catchup_cap_reports_omitted_history(tmp_path):
 
 
 def test_shadow_cli_rejects_previous_run_report(tmp_path, monkeypatch):
-    from crypto_boom import okx_scan
+    from crypto_boom import scan as scanner
     (tmp_path / 'scan-report.json').write_text('{"run_token":"previous"}')
-    monkeypatch.setattr('sys.argv', ['okx_scan', '--workspace', str(tmp_path)])
+    monkeypatch.setattr('sys.argv', ['scan', '--workspace', str(tmp_path)])
     monkeypatch.setattr(runtime, 'supervise', lambda *args, **kwargs: 0)
     with pytest.raises(trial.Unavailable, match='stale_shadow_report'):
-        okx_scan.main()
+        scanner.main()
     assert not (tmp_path / 'checkpoint.json.lock').exists()
 
 
 def test_compute_deadline_discards_partial_replay(tmp_path, monkeypatch):
-    from crypto_boom import okx_scan
+    from crypto_boom import scan as scanner
     cache = data.ProductCache(tmp_path)
     rows = snapshot(hour=True)
     series = {g: trial.Series.parse(raw, g) for g, raw in zip(data.GRAINS.values(), rows, strict=True)}
@@ -215,7 +215,7 @@ def test_compute_deadline_discards_partial_replay(tmp_path, monkeypatch):
         def evaluate(self, at):
             clock.now = 420
             return (trial.Evaluation('A0', PRODUCT.key, at, True, direction='UP'),)
-    monkeypatch.setattr(okx_scan, 'Detector', Detector)
+    monkeypatch.setattr(scanner, 'Detector', Detector)
     def handle(request):
         grain = {'1m': trial.MINUTE, '5m': trial.FIVE, '1H': trial.HOUR}[request.url.params['bar']]
         end, limit = int(request.url.params['after']), int(request.url.params['limit'])

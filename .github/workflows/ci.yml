@@ -3,11 +3,15 @@ name: Offline checks
 "on":
   pull_request:
     branches: [main]
-    paths: ["src/**", "tests/**", "requirements*.txt", ".github/workflows/**"]
+    paths: ["src/**", "tests/**", "pyproject.toml", "uv.lock", ".github/workflows/**"]
   workflow_dispatch:
 
 permissions:
   contents: read
+defaults:
+  run:
+    shell: bash
+
 concurrency:
   group: offline-checks-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
@@ -23,26 +27,24 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           persist-credentials: false
-      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
         with:
+          version: "0.12.17"
           python-version: "3.12"
-      - name: Install pinned test dependencies
-        shell: bash
-        run: |
-          python -m pip install --disable-pip-version-check --no-cache-dir uv==0.12.17
-          uv pip install --python "$(command -v python)" --no-cache -r requirements.txt -r requirements-dev.txt
+          activate-environment: true
+          enable-cache: false # Keep storage exclusively for bounded scanner state.
+          cache-python: false
+      - name: Install locked test dependencies
+        run: uv sync --locked --no-cache --no-python-downloads
       - name: Offline regression
         id: tests
-        shell: bash
         run: python -m pytest -q -p no:cacheprovider --basetemp "$RUNNER_TEMP/offline-tests"
       - name: Static checks
         id: lint
         if: success() || failure()
-        shell: bash
         run: python -m ruff check --no-cache --select F,I,RUF100 src tests
       - name: Show check disposition
         if: always()
-        shell: bash
         env:
           TEST_OUTCOME: ${{ steps.tests.outcome }}
           LINT_OUTCOME: ${{ steps.lint.outcome }}

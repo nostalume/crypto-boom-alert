@@ -1,6 +1,6 @@
 """Prepare durable intent, then publish once after a separately verified save.
 
-There is no cache callback, auto-baseline, CLI or production caller. The Actions
+There is no cache callback or auto-baseline. The production Actions
 consumer must verify the exact current-run cache on a fresh runner before passing
 its checkpoint digest to publish_pending. A digest alone is not that evidence.
 """
@@ -16,8 +16,8 @@ from urllib.parse import quote
 
 import httpx
 
-from .okx_state import StateStore
-from .okx_storage import (
+from .state import StateStore
+from .storage import (
     DAY,
     MIB,
     RECEIPT_TAG,
@@ -26,7 +26,7 @@ from .okx_storage import (
     extract_public_receipt,
     format_receipt_intent,
 )
-from .okx_trial import MINUTE, RULES, VERSION, Transition, Unavailable
+from .trial import MINUTE, RULES, VERSION, Transition, Unavailable
 
 START = "<!-- OKX_ALERT_START -->"
 END = "<!-- OKX_ALERT_END -->"

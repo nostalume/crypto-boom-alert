@@ -14,7 +14,7 @@ from copy import deepcopy
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
-from .okx_trial import (
+from .trial import (
     HOUR,
     MINUTE,
     RULES,

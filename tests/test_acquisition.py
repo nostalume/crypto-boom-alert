@@ -6,13 +6,13 @@ from types import SimpleNamespace
 
 import httpx
 import pytest
-from test_okx_stage3 import budget, response
-from test_okx_trial import PRODUCT, T, row
+from test_stage3 import budget, response
+from test_trial import PRODUCT, T, row
 
-from crypto_boom import okx_data as data
-from crypto_boom import okx_state as state
-from crypto_boom import okx_trial as trial
-from crypto_boom.okx_scan import scan
+from crypto_boom import data as data
+from crypto_boom import state as state
+from crypto_boom import trial as trial
+from crypto_boom.scan import scan
 
 
 class MemoryCache:

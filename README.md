@@ -1,46 +1,45 @@
-# Crypto Boom: public hourly altcoin status
+# Crypto Boom Alert
 
-<!-- HOURLY_ALERT_STATUS_START -->
-**Last complete scan:** 2026-10-12T00:00:00+00:00 (UTC hour close).  
-**New conditions:** 1; evaluated 493 / eligible 497; unavailable history 4.
+只读 OKX 公共行情，监测 USDT 现货与 USDT 永续的价量异常；不交易、不需要交易所密钥。
+GitHub Actions 目标每 10 分钟运行一次，但可能延迟或漏触发。
 
-| Stage | Pair | Turnover (USDT) | Ratio | Z-score | EMA premium | Net taker (USDT) |
-| --- | --- | ---: | ---: | ---: | ---: | ---: |
-| WATCH | AXLUSDT | 117,356 | 5.2 | 4.2 | +2.5% | 63,022 |
+## 何时提醒
 
-Attention filter only; not a return forecast or buy recommendation.
-<!-- HOURLY_ALERT_RECEIPT_V1:eyJiYXJfY2xvc2VfdXRjIjoiMjAyNi0xMC0xMlQwMDowMDowMCswMDowMCIsImJpbmFuY2Vfc2VydmVyX3RpbWVfdXRjIjoiMjAyNi0xMC0xMlQwMDoyNjoyOC42NDQwMDArMDA6MDAiLCJlbGlnaWJsZV9zeW1ib2xzIjo0OTcsImV2YWx1YXRlZF9zeW1ib2xzIjo0OTMsInNjYW5fY29tcGxldGVkX3V0YyI6IjIwMjYtMTAtMTJUMDA6Mjc6MzQuMjE0MDc4KzAwOjAwIiwic2Nhbl9zdGFydGVkX3V0YyI6IjIwMjYtMTAtMTJUMDA6MjY6MjcuNzAyNDQyKzAwOjAwIiwic2NoZW1hX3ZlcnNpb24iOjEsInNpZ25hbHMiOlt7ImJhcl9vcGVuX21zIjoxNzkxNzU5NjAwMDAwLCJlbWFfcHJlbWl1bSI6MC4wMjUyODEwMDYwNTQzOTEwOTcsIm5ldF90YWtlcl9xdW90ZV91c2R0Ijo2MzAyMi40MTYwMDgsInF1b3RlX3ZvbHVtZV91c2R0IjoxMTczNTYuMzQ5NzI4LCJzdGFnZSI6IldBVENIIiwic3ltYm9sIjoiQVhMVVNEVCIsInZvbHVtZV9yYXRpbyI6NS4yMjY3MTkxMDc3NTI2MzIsInZvbHVtZV96c2NvcmUiOjQuMjA2MDY4MTE2Njk2ODQ5fV0sInVuYXZhaWxhYmxlX2hpc3Rvcnlfc3ltYm9scyI6NH0= -->
-<!-- HOURLY_ALERT_STATUS_END -->
+生产使用 A0：最近 5 根已完成 1 分钟 K 线的 USDT 成交额至少 100,000，
+相对前 7 天已完成 5 分钟成交额均值至少 3 倍，且 5 分钟价格变动绝对值至少 0.5%。
+小时 EMA20 只作背景，不是硬门槛；这里比较的是成交额与成交额，不是成交量与 VWAP。
 
-This is a free, read-only **attention filter** for unusual Binance Spot altcoin activity. It does not predict a 20% or 30% rise, recommend an entry, place an order, or establish profitability. The public status is updated after a successful hourly scan; a failed or missed scan leaves its timestamp stale. A README update is **not** a guaranteed push notification.
+新事件进入 OBSERVED 或首次进入 PERSISTENT 时，符合时效且未发送的变化合并为一条
+`OKX ALTCOIN ALERT ...` 提交，沿用仓库已有 GitHub push 邮件通知。无新变化不提交。
+超过 24 小时的事件不发；30 分钟内标为 TIMELY，其余为 BACKFILL。
+PERSISTENT 是事件跟踪阶段：中间不足 10 次的条件不满足不一定重置计时，不能理解为严格连续达标。
+ENDED 不发邮件，UP/DOWN 是观测方向，不是买卖建议或收益概率。
 
-If the repository administrator enables GitHub push-email notifications, each successful status commit now names up to five top-ranked `STAGE:SYMBOL` matches in its subject, followed by `+N more` when needed. No-match commits explicitly say `NO NEW ALTCOIN SIGNALS`. This lets an email reader see the leading pairs without opening the diff; the full status still lives above. GitHub delivery, scheduling, and email-client truncation are not guaranteed.
+## 如何读邮件
 
-## Which pairs are scanned?
+打开邮件关联的**那次提交**查看新增告警表格，而不是只看 main 的最新 README。
+标题时间是批次生成 UTC 时间；表中“首次条件 / 本次条件 / 条件年龄”说明行情发生时间。
+及时项优先，同类 PERSISTENT 优先，再按币种和产品身份稳定排序；不是量化收益排名。
+现货与永续保留独立记录，同批出现不同方向可能对应不同时间的事件。
+工程提交、Actions 结果通知和带 TEST ONLY 的测试邮件都不是真实行情告警。
+提交确认不等于邮件送达，页面不更新也不等于扫描失败；覆盖与失败看 Actions summary。
 
-Each run reads Binance's current exchange metadata and considers pairs that are `TRADING`, Spot-enabled, quoted in USDT, and have an ASCII alphanumeric symbol. BTC, ETH, BNB, and an explicit stable/fiat base-asset list are excluded. This is a current eligible pool, not a historical census. The scanner refuses a pool above 1,000 pairs rather than silently truncating it. A pair without 170 contiguous, completed hourly bars is counted as unavailable, not as a negative signal.
+## 运行与检查
 
-## What is compared, and how are matches ordered?
-
-The rule compares **each pair with its own preceding 168 completed hours**, not with other coins' absolute volume. Its hourly quote turnover is measured in USDT. It computes turnover divided by the preceding 168-hour mean, a z-score against that same prior distribution, close relative to the prior EMA20, and executed taker-buy quote volume minus taker-sell quote volume. These are descriptive conditions, not calibrated probabilities.
-
-`WATCH` requires at least $100,000 hourly turnover, a 3× turnover ratio, z-score at least 3, close at or above the prior EMA20, and positive net taker flow. `CONFIRMED` adds at least $500,000 hourly turnover and net taker flow, plus close at least 5% above the prior EMA20. A pair appears only when it first enters a stage or moves from WATCH to CONFIRMED; a persistent same-stage hour does not repeat.
-
-Matches are sorted by **CONFIRMED before WATCH**, then descending *within-pair turnover ratio*, then alphabetically by symbol. The first 20 appear above; the complete list, if longer, remains in the Actions run log. This ordering is a display priority, **not** a cross-coin probability ranking or a profitability estimate. A high ratio can reflect a very low prior base and may be misleading.
-
-From the first scan after this version is deployed, the status block also contains a hidden `HOURLY_ALERT_RECEIPT_V1` HTML comment. It is URL-safe Base64-encoded JSON holding the **complete ranked match list**, eligible/evaluated/unavailable counts, Binance server time, source-bar close, and scanner start/completion times. The visible table remains limited to 20 pairs and the commit title to five. Prior README commits cannot be retroactively given this receipt. Each successful status commit preserves its own receipt in Git history; an absent commit or stale timestamp is **not** a zero-match observation. The Git commit time is a publication proxy, not an email-delivery timestamp.
-
-## Operation and limits
-
-The [scheduled workflow](.github/workflows/hourly-altcoin-alert.yml) starts at minute 07 after each UTC hour. It requests the latest completed hourly bar and 169 prior bars, starts at most eight requests per second, uses at most 16 workers, and aborts if the latest bar is more than 45 minutes old. Scheduled GitHub Actions can be delayed or skipped. The job writes this README using GitHub's Contents API only after a complete scan, and prints a JSON receipt plus Linux process peak RSS in the run log. The Python scanner uses no third-party runtime packages.
-
-To perform a local scan without publishing:
+[运维说明](docs/okx-operations.md) 包含暂停、状态恢复和免费边界。
+当前使用标准 GitHub-hosted runner、严格限额的 native cache，不上传 artifact。
+缺失、不兼容或未知发布状态停止通知，不自动清空账本重发。
 
 ```sh
-PYTHONPATH=src python -m crypto_boom.hourly_alert
+uv sync --locked
+export PYTHONPATH=src
+uv run --locked --no-sync python -m pytest -q -p no:cacheprovider
+uv run --locked --no-sync python -m ruff check --no-cache --select F,I,RUF100 src tests
 ```
 
-The 1-hour grain and 168-hour baseline are **provisional**, inspired by a published volume-shock example rather than optimized for large-move event recall. A proper comparison needs independent 20%/30% event definitions, alternative scan grains and baselines, out-of-time evaluation, alert lead time, false matches per day, and missed-event accounting. Public status should never be mistaken for a validated trading system.
+依赖以 `pyproject.toml + uv.lock` 为唯一来源；Python 3.12/3.13，非打包项目。
+生产只安装运行依赖，CI 安装 dev 组。更新依赖须显式更新并检查 lock，不在运行时自动升级。
+Windows PowerShell 使用 `$env:PYTHONPATH="src"` 代替上面的 `export`；uv 由 aqua 管理时可调用其真实 exe 路径。
 
 <!-- OKX_ALERT_START -->
 ## 最近 OKX 告警 / Latest alerts

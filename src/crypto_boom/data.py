@@ -15,7 +15,7 @@ from types import MappingProxyType
 
 import httpx
 
-from .okx_trial import FIVE, HOUR, MINUTE, Product, Series, Unavailable
+from .trial import FIVE, HOUR, MINUTE, Product, Series, Unavailable
 
 PATHS = frozenset({"/api/v5/public/time", "/api/v5/public/instruments",
                    "/api/v5/market/candles", "/api/v5/market/history-candles"})

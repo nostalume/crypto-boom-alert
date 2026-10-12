@@ -1,12 +1,10 @@
 name: OKX altcoin alert
 
 "on":
-  schedule:
-    - cron: '3-59/10 * * * *'
   workflow_dispatch:
     inputs:
       mode:
-        description: Preview is non-notifying; live requires a stopped legacy writer and operator gate
+        description: Preview is non-notifying; live requires an operator gate and armed state
         type: choice
         options: [preview, live]
         default: preview
@@ -33,6 +31,10 @@ name: OKX altcoin alert
         default: ""
 
 permissions: {}
+defaults:
+  run:
+    shell: bash
+
 concurrency:
   group: okx-live-writer
   cancel-in-progress: false
@@ -63,44 +65,39 @@ jobs:
       head: ${{ steps.scan.outputs.head }}
       previous_key: ${{ steps.scan.outputs.previous_key }}
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - &checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           persist-credentials: false
-      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+      - &setup_uv
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
         with:
+          version: "0.12.17"
           python-version: "3.12"
-      - name: Install pinned runtime only
-        shell: bash
-        run: |
-          python -m pip install --disable-pip-version-check --no-cache-dir uv==0.12.17
-          uv pip install --python "$(command -v python)" --no-cache -r requirements.txt
+          activate-environment: true
+          enable-cache: false # Keep storage exclusively for bounded scanner state.
+          cache-python: false
+      - name: Install locked runtime only
+        run: uv sync --locked --no-dev --no-cache --no-python-downloads
       - name: Select immediate predecessor
         id: selected
-        shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           WORKROOT="$RUNNER_TEMP/okx-live"
           mkdir "$WORKROOT"
           timeout 30s gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" > "$WORKROOT/current.json"
-          python -m crypto_boom.okx_live window --root "$WORKROOT"
+          python -m crypto_boom.live window --root "$WORKROOT"
           if [[ $(jq -r '.status // "open"' "$WORKROOT/result.json" 2>/dev/null || printf open) != open ]]; then exit 0; fi
           workflow=$(jq -er '.workflow_id' "$WORKROOT/current.json")
           [[ "$workflow" =~ ^[1-9][0-9]*$ ]]
           timeout 30s gh api "repos/$GITHUB_REPOSITORY/actions/workflows/$workflow/runs?per_page=100" > "$WORKROOT/history.json"
           timeout 30s gh api "repos/$GITHUB_REPOSITORY/actions/cache/usage" > "$WORKROOT/usage.json" || printf '{}' > "$WORKROOT/usage.json"
           timeout 30s gh api "repos/$GITHUB_REPOSITORY/actions/caches?key=okx-live-cache-v1-w$workflow-&per_page=100" > "$WORKROOT/caches.json" || printf '{}' > "$WORKROOT/caches.json"
-          if [[ "$MODE" == live ]]; then
-            timeout 30s gh api "repos/$GITHUB_REPOSITORY/actions/workflows/hourly-altcoin-alert.yml" > "$WORKROOT/legacy.json"
-            for status in in_progress queued requested waiting pending; do
-              timeout 30s gh api "repos/$GITHUB_REPOSITORY/actions/workflows/hourly-altcoin-alert.yml/runs?status=$status&per_page=100" > "$WORKROOT/legacy-$status.json"
-            done
-          fi
-          python -m crypto_boom.okx_live select --root "$WORKROOT"
+          python -m crypto_boom.live select --root "$WORKROOT"
       - name: Read independent producer proof
         if: steps.selected.outputs.window_open == 'true'
         id: proof
-        shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
           PRODUCER_RUN: ${{ steps.selected.outputs.producer_run }}
@@ -110,7 +107,7 @@ jobs:
           if [[ "$PRODUCER_RUN" != 0 ]]; then
             timeout 30s gh api "repos/$GITHUB_REPOSITORY/actions/runs/$PRODUCER_RUN/attempts/1/jobs?per_page=100" > "$WORKROOT/producer-jobs.json" || printf '{}' > "$WORKROOT/producer-jobs.json"
           fi
-          python -m crypto_boom.okx_live admit --root "$WORKROOT"
+          python -m crypto_boom.live admit --root "$WORKROOT"
       - name: Restore exact previous final
         if: steps.selected.outputs.window_open == 'true' && steps.selected.outputs.restore_key != '' && steps.proof.outputs.persist != 'false'
         id: restored
@@ -119,10 +116,16 @@ jobs:
           path: ${{ runner.temp }}/okx-live/transfer
           key: ${{ steps.selected.outputs.restore_key }}
           fail-on-cache-miss: false # CLI permits only non-persisting preview diagnostics on a miss.
+      - name: Read fixed legacy validator for one non-notifying handoff
+        if: env.MODE == 'preview'
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ace1386709499685df70d4467574c36b02cb5335
+          path: .migration-source
+          persist-credentials: false
       - name: Scan and prepare bounded state
         if: steps.selected.outputs.window_open == 'true'
         id: scan
-        shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
           CACHE_HIT: ${{ steps.restored.outputs.cache-hit }}
@@ -134,19 +137,77 @@ jobs:
             [[ "$head" =~ ^[0-9a-f]{40}$ ]]
             timeout 30s gh api "repos/$GITHUB_REPOSITORY/contents/README.md?ref=$head" > "$WORKROOT/target-readme.json"
           fi
-          python -m crypto_boom.okx_live prepare --root "$WORKROOT"
+          if [[ "$MODE" == live ]]; then
+            python -m crypto_boom.live prepare --root "$WORKROOT"
+          else
+            python - <<'PY'
+          import json, os, subprocess, sys
+          from dataclasses import asdict
+          from pathlib import Path
+          from crypto_boom import cache, live
+          from crypto_boom.state import StateStore
+
+          OLD_SOURCE = 'ace1386709499685df70d4467574c36b02cb5335'
+          OLD_RUN = 38188949885
+          OLD_MANIFEST = '76ff23344eb3e9479046b020b6985961a14055fc16544ea71bb400ba5bca2326'
+          WORKER = "import json, sys\nfrom pathlib import Path\nfrom crypto_boom import okx_cache as old\nfrom crypto_boom.okx_storage import Scope\np = json.load(sys.stdin)\nstate, files, total = old._validated_bundle(Path(p['bundle']), scope=Scope(**p['scope']),\n    source_sha=p['source_sha'], run_id=p['run_id'], manifest_sha256=p['manifest_sha256'], now=p['now'])\nif not state.notifications_enabled or any(v['status'] != 'confirmed' for v in state.ledger.values()):\n    raise ValueError('handoff_requires_armed_resolved_predecessor')\nprint(json.dumps({'files': files, 'total': total, 'ledger_digest': old.digest(old._json(state.ledger)),\n    'ledger_entries': len(state.ledger), 'generation': state.generation, 'at': state.at,\n    'cursor': state.cursor, 'tracker_digest': old.digest(old._json(state.encode()['last_at'])),\n    'active_digest': old.digest(old._json(state.encode()['active']))}, sort_keys=True))\n"
+          ROOT = Path(os.environ['RUNNER_TEMP']) / 'okx-live'
+          LEGACY = Path('.migration-source').resolve()
+
+          def legacy_validation(bundle, *, scope, source_sha, run_id, manifest_sha256, now):
+              if (source_sha, run_id, manifest_sha256) != (OLD_SOURCE, OLD_RUN, OLD_MANIFEST):
+                  raise ValueError('handoff_exact_external_predecessor_required')
+              request = dict(bundle=str(bundle.resolve()), scope=asdict(scope), source_sha=source_sha,
+                             run_id=run_id, manifest_sha256=manifest_sha256, now=now)
+              environment = dict(os.environ, PYTHONPATH=str(LEGACY / 'src'))
+              child = subprocess.run([sys.executable, '-c', WORKER], input=json.dumps(request),
+                                     env=environment, capture_output=True, text=True, timeout=30, check=True)
+              receipt = json.loads(child.stdout)
+              raw = cache._read(bundle / 'checkpoint.json', 8 * 1024 * 1024)
+              if cache.digest(raw) != receipt['files']['checkpoint.json']['sha256']:
+                  raise ValueError('handoff_checkpoint_changed')
+              state, reason = StateStore(bundle / 'checkpoint.json').load()
+              if (state is None or reason != 'state_hit' or not state.notifications_enabled
+                      or any(v['status'] != 'confirmed' for v in state.ledger.values())
+                      or (state.generation, state.at, state.cursor) != (receipt['generation'], receipt['at'], receipt['cursor'])
+                      or cache.digest(cache._json(state.ledger)) != receipt['ledger_digest']
+                      or cache.digest(cache._json(state.encode()['last_at'])) != receipt['tracker_digest']
+                      or cache.digest(cache._json(state.encode()['active'])) != receipt['active_digest']):
+                  raise ValueError('handoff_new_schema_or_state_mismatch')
+              (ROOT / 'migration-receipt.json').write_bytes(cache._json(receipt))
+              return state, receipt['files'], receipt['total']
+
+          if __name__ == '__main__':
+              if os.environ.get('MODE') != 'preview' or os.environ.get('REBUILD') != 'false':
+                  raise ValueError('handoff_nonnotifying_preview_only')
+              original = cache._validated_bundle
+              cache._validated_bundle = legacy_validation
+              try:
+                  sys.argv = ['handoff', 'prepare', '--root', str(ROOT)]
+                  live.main()
+              finally:
+                  cache._validated_bundle = original
+              receipt = json.loads((ROOT / 'migration-receipt.json').read_bytes())
+              state, reason = StateStore(ROOT / 'transfer/checkpoint.json').load()
+              if (state is None or reason != 'state_hit' or state.notifications_enabled
+                      or cache.digest(cache._json(state.ledger)) != receipt['ledger_digest']
+                      or len(state.ledger) != receipt['ledger_entries']):
+                  raise ValueError('handoff_ledger_not_preserved')
+              print('OKX_MIGRATION_V1 ' + json.dumps({k: receipt[k] for k in
+                  ('ledger_digest', 'ledger_entries', 'generation', 'at', 'cursor')}, sort_keys=True))
+          PY
+          fi
       - name: Check free headroom before save
         if: steps.scan.outputs.persist == 'true'
-        shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-        run: |
+        run: &guard_save |
           WORKROOT="$RUNNER_TEMP/okx-live"
           workflow=$(jq -er '.workflow_id' "$WORKROOT/current.json")
           [[ "$workflow" =~ ^[1-9][0-9]*$ ]]
           timeout 30s gh api "repos/$GITHUB_REPOSITORY/actions/cache/usage" > "$WORKROOT/usage.json"
           timeout 30s gh api "repos/$GITHUB_REPOSITORY/actions/caches?key=okx-live-cache-v1-w$workflow-&per_page=100" > "$WORKROOT/caches.json"
-          python -m crypto_boom.okx_live guard-save --root "$WORKROOT"
+          python -m crypto_boom.live guard-save --root "$WORKROOT"
       - name: Save explicit intent or quiet final
         timeout-minutes: 2
         if: steps.scan.outputs.persist == 'true'
@@ -156,31 +217,28 @@ jobs:
           key: ${{ steps.scan.outputs.key }}
       - name: ${{ steps.scan.outputs.proof }}
         if: steps.scan.outputs.persist == 'true' && steps.scan.outputs.has_intent == 'false'
-        shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-        run: |
+        run: &finalize |
           WORKROOT="$RUNNER_TEMP/okx-live"
           workflow=$(jq -er '.workflow_id' "$WORKROOT/current.json")
           [[ "$workflow" =~ ^[1-9][0-9]*$ ]]
           timeout 30s gh api "repos/$GITHUB_REPOSITORY/actions/caches?key=okx-live-cache-v1-w$workflow-&per_page=100" > "$WORKROOT/caches.json"
-          python -m crypto_boom.okx_live plan-cleanup --root "$WORKROOT"
+          python -m crypto_boom.live plan-cleanup --root "$WORKROOT"
           for id in $(jq -r '.[].id' "$WORKROOT/cleanup.json"); do
             [[ "$id" =~ ^[1-9][0-9]*$ ]]
             timeout 30s gh api "repos/$GITHUB_REPOSITORY/actions/caches?key=okx-live-cache-v1-w$workflow-&per_page=100" > "$WORKROOT/caches.json"
-            python -m crypto_boom.okx_live check-cleanup --root "$WORKROOT" --cache-id "$id"
+            python -m crypto_boom.live check-cleanup --root "$WORKROOT" --cache-id "$id"
             timeout 30s gh api -X DELETE "repos/$GITHUB_REPOSITORY/actions/caches/$id"
           done
           timeout 30s gh api "repos/$GITHUB_REPOSITORY/actions/caches?key=okx-live-cache-v1-w$workflow-&per_page=100" > "$WORKROOT/caches.json"
-          python -m crypto_boom.okx_live finish --root "$WORKROOT"
+          python -m crypto_boom.live finish --root "$WORKROOT"
       - name: Show scan coverage and notification disposition
         id: disposition
         if: always()
-        shell: bash
-        run: python -m crypto_boom.okx_live summary --root "$RUNNER_TEMP/okx-live"
+        run: python -m crypto_boom.live summary --root "$RUNNER_TEMP/okx-live"
       - name: Stop only this finite observation workflow
         if: always() && steps.disposition.outputs.stop_workflow_id != ''
-        shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
           STOP_WORKFLOW_ID: ${{ steps.disposition.outputs.stop_workflow_id }}
@@ -207,17 +265,11 @@ jobs:
       TARGET_HEAD: ${{ needs.prepare.outputs.head }}
       PREVIOUS_KEY: ${{ needs.prepare.outputs.previous_key }}
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          persist-credentials: false
-      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
-        with:
-          python-version: "3.12"
-      - name: Install pinned runtime only
-        shell: bash
+      - *checkout
+      - *setup_uv
+      - name: Install locked runtime only
         run: |
-          python -m pip install --disable-pip-version-check --no-cache-dir uv==0.12.17
-          uv pip install --python "$(command -v python)" --no-cache -r requirements.txt
+          uv sync --locked --no-dev --no-cache --no-python-downloads
           mkdir "$RUNNER_TEMP/okx-live"
       - name: Restore exact current-run intent
         id: restored
@@ -228,7 +280,6 @@ jobs:
           fail-on-cache-miss: true
       - name: Refresh writer fences and consume once
         id: publish
-        shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
           CACHE_HIT: ${{ steps.restored.outputs.cache-hit }}
@@ -238,51 +289,25 @@ jobs:
           workflow=$(jq -er '.workflow_id' "$WORKROOT/current.json")
           [[ "$workflow" =~ ^[1-9][0-9]*$ ]]
           timeout 30s gh api "repos/$GITHUB_REPOSITORY/actions/workflows/$workflow/runs?per_page=100" > "$WORKROOT/history.json"
-          timeout 30s gh api "repos/$GITHUB_REPOSITORY/actions/workflows/hourly-altcoin-alert.yml" > "$WORKROOT/legacy.json"
-          for status in in_progress queued requested waiting pending; do
-            timeout 30s gh api "repos/$GITHUB_REPOSITORY/actions/workflows/hourly-altcoin-alert.yml/runs?status=$status&per_page=100" > "$WORKROOT/legacy-$status.json"
-          done
           timeout 30s gh api "repos/$GITHUB_REPOSITORY/actions/cache/usage" > "$WORKROOT/usage.json"
           timeout 30s gh api "repos/$GITHUB_REPOSITORY/actions/caches?key=okx-live-cache-v1-w$workflow-&per_page=100" > "$WORKROOT/caches.json"
           timeout 30s gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" > "$WORKROOT/target-ref.json"
           [[ "$TARGET_HEAD" =~ ^[0-9a-f]{40}$ ]]
           timeout 30s gh api "repos/$GITHUB_REPOSITORY/contents/README.md?ref=$TARGET_HEAD" > "$WORKROOT/target-readme.json"
-          python -m crypto_boom.okx_live consume --root "$WORKROOT"
+          python -m crypto_boom.live consume --root "$WORKROOT"
       - name: Check free headroom before final save
-        shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-        run: |
-          WORKROOT="$RUNNER_TEMP/okx-live"
-          workflow=$(jq -er '.workflow_id' "$WORKROOT/current.json")
-          [[ "$workflow" =~ ^[1-9][0-9]*$ ]]
-          timeout 30s gh api "repos/$GITHUB_REPOSITORY/actions/cache/usage" > "$WORKROOT/usage.json"
-          timeout 30s gh api "repos/$GITHUB_REPOSITORY/actions/caches?key=okx-live-cache-v1-w$workflow-&per_page=100" > "$WORKROOT/caches.json"
-          python -m crypto_boom.okx_live guard-save --root "$WORKROOT"
+        run: *guard_save
       - name: Save explicit confirmed final
         uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: ${{ runner.temp }}/okx-live/transfer
           key: ${{ steps.publish.outputs.key }}
       - name: ${{ steps.publish.outputs.proof }}
-        shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-        run: |
-          WORKROOT="$RUNNER_TEMP/okx-live"
-          workflow=$(jq -er '.workflow_id' "$WORKROOT/current.json")
-          [[ "$workflow" =~ ^[1-9][0-9]*$ ]]
-          timeout 30s gh api "repos/$GITHUB_REPOSITORY/actions/caches?key=okx-live-cache-v1-w$workflow-&per_page=100" > "$WORKROOT/caches.json"
-          python -m crypto_boom.okx_live plan-cleanup --root "$WORKROOT"
-          for id in $(jq -r '.[].id' "$WORKROOT/cleanup.json"); do
-            [[ "$id" =~ ^[1-9][0-9]*$ ]]
-            timeout 30s gh api "repos/$GITHUB_REPOSITORY/actions/caches?key=okx-live-cache-v1-w$workflow-&per_page=100" > "$WORKROOT/caches.json"
-            python -m crypto_boom.okx_live check-cleanup --root "$WORKROOT" --cache-id "$id"
-            timeout 30s gh api -X DELETE "repos/$GITHUB_REPOSITORY/actions/caches/$id"
-          done
-          timeout 30s gh api "repos/$GITHUB_REPOSITORY/actions/caches?key=okx-live-cache-v1-w$workflow-&per_page=100" > "$WORKROOT/caches.json"
-          python -m crypto_boom.okx_live finish --root "$WORKROOT"
+        run: *finalize
       - name: Show commit disposition (not delivery proof)
         if: always()
-        shell: bash
-        run: python -m crypto_boom.okx_live summary --root "$RUNNER_TEMP/okx-live"
+        run: python -m crypto_boom.live summary --root "$RUNNER_TEMP/okx-live"

@@ -2,14 +2,14 @@
 from copy import deepcopy
 
 import pytest
-from test_okx_cache import SCOPE, SOURCE, T, authority, sealed
+from test_cache import SCOPE, SOURCE, T, authority, sealed
 
-from crypto_boom import okx_cache as cache
-from crypto_boom.okx_state import Checkpoint, StateStore
-from crypto_boom.okx_storage import GIB, MIB, digest
-from crypto_boom.okx_trial import MINUTE, VERSION, Transition, Unavailable
+from crypto_boom import cache as cache
+from crypto_boom.state import Checkpoint, StateStore
+from crypto_boom.storage import GIB, MIB, digest
+from crypto_boom.trial import MINUTE, VERSION, Transition, Unavailable
 
-PATH = '.github/workflows/okx-live.yml'  # Future caller; no production YAML exists here.
+PATH = '.github/workflows/okx-live.yml'
 PRODUCTS = (('okx', 'SPOT', 'ONE-USDT'), ('okx', 'SWAP', 'TWO-USDT-SWAP'))
 
 
@@ -65,7 +65,7 @@ def test_previous_rejects_untrusted_incomplete_or_superseded_page(variant):
     elif variant == 'workflow':
         producer['workflow_id'] += 1
     elif variant == 'path':
-        producer['path'] = cache.NOTIFICATION_WORKFLOW
+        producer['path'] = '.github/workflows/other.yml'
     elif variant == 'pull_request':
         producer['event'] = 'pull_request'
     elif variant == 'bool_attempt':
@@ -239,7 +239,7 @@ def test_manual_baseline_never_overwrites_unknown_or_partial_state(tmp_path, var
     elif variant == 'bool_generation':
         approval['generation'] = True
     elif variant == 'save_failure':
-        import crypto_boom.okx_state as owner
+        import crypto_boom.state as owner
 
         def failed_write(*args):
             raise OSError('injected atomic write failure')

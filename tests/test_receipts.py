@@ -4,22 +4,14 @@ import json
 from copy import deepcopy
 
 import pytest
-from test_okx_storage import (
-    SCOPE,
-    SOURCE,
-    T,
-    add,
-    bundle,
-    chain,
-    pending,
-    query,
-    restore,
-)
 
-from crypto_boom import okx_storage as storage
-from crypto_boom.okx_state import Checkpoint, StateStore
-from crypto_boom.okx_trial import MINUTE, VERSION, Transition
+from crypto_boom import storage as storage
+from crypto_boom.state import Checkpoint
+from crypto_boom.trial import MINUTE, VERSION, Transition
 
+SCOPE = storage.Scope("nostalume/crypto-boom-alert", 123, "refs/heads/main")
+SOURCE = "a" * 40
+T = 2000000000 * MINUTE
 
 def prepared(count=2):
     checkpoint = Checkpoint(generation=3, at=T, notifications_enabled=True)
@@ -207,50 +199,3 @@ def test_maximum_ten_thousand_message_batch_fits_the_actual_wire_caps():
     assert len(marker.encode()) < storage.MIB
     assert len(base64.urlsafe_b64decode(marker.split(':', 1)[1].removesuffix(' -->'))) < storage.RECEIPT_PAYLOAD_LIMIT
     assert len(decode(marker).ids) == 10000
-
-
-def test_parsed_receipt_reconciles_saved_unknown_intent_but_shadow_adoption_stays_disabled(tmp_path):
-    backend, parent = chain(1)
-    checkpoint, ids, _ = pending(parent)
-    checkpoint.unknown(ids)
-    raw = bundle(1, parent, at=checkpoint.at, enabled=True, ledger=checkpoint.ledger)
-    add(backend, raw)
-    before = deepcopy(checkpoint.encode())
-    receipt = decode(encode(checkpoint, ids), published_at=checkpoint.at + 1000)
-    # Fixture owns the completeness assumption; codec provides no such capability.
-    now = checkpoint.at + MINUTE
-    result = restore(backend, now, query(now, (receipt,)))
-    assert result.reason == 'restored' and result.may_prepare
-    assert all(result.checkpoint.ledger[key]['status'] == 'confirmed' for key in ids)
-    assert checkpoint.encode() == before and backend.bodies['state-1'] == raw
-    store = StateStore(tmp_path / 'state.json')
-    with store.writer():
-        adopted = store.restore_shadow(result.checkpoint)
-        assert not adopted.notifications_enabled
-    loaded, reason = store.load()
-    assert reason == 'state_hit' and loaded.encode() == adopted.encode()
-
-
-def test_parsing_does_not_make_query_complete_or_confirm_partial_or_ahead_of_state():
-    backend, parent = chain(1)
-    checkpoint, ids = prepared()
-    checkpoint.generation = 1
-    raw = bundle(1, parent, at=T, enabled=True, ledger=checkpoint.ledger)
-    add(backend, raw)
-    marker = encode(checkpoint, ids)
-    receipt = decode(marker)
-    now = T + MINUTE
-    result = restore(backend, now, query(now, (receipt,), complete=False))
-    assert not result.may_prepare and result.reason == 'receipts_incomplete'
-    assert all(result.checkpoint.ledger[key]['status'] == 'pending' for key in ids)
-    body = payload(marker)
-    body['ids'] = body['ids'][:1]
-    body['batch'] = storage.digest(json.dumps(body['ids'], separators=(',', ':')).encode())
-    partial = decode(marker_for(body))  # Structural validity alone is not batch proof.
-    result = restore(backend, now, query(now, (partial,)))
-    assert not result.may_prepare and result.reason.startswith('receipts_invalid')
-    body = payload(marker)
-    body['generation'] = 999
-    ahead = decode(marker_for(body))
-    result = restore(backend, now, query(now, (ahead,)))
-    assert not result.may_prepare and result.reason.startswith('receipts_invalid')

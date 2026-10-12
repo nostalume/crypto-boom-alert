@@ -2,8 +2,7 @@
 
 The workflow owns GitHub metadata, exact native transfers and DELETE. This command
 owns their admission and orchestration, never enabling a cron or deleting caches.
-Preview is default; live additionally requires an operator gate and stopped old
-writer. A successful step name supplies independent next-run final proof.
+Preview is default; live additionally requires an operator gate. A successful step name supplies independent next-run final proof.
 """
 import argparse
 import base64
@@ -15,17 +14,15 @@ from collections import Counter
 from datetime import datetime
 from pathlib import Path
 
-from . import okx_cache as cache
-from .okx_publish import GitHubPublisher, _git_blob, prepare_batch, publish_pending
-from .okx_runtime import supervise
-from .okx_scan import scan_job
-from .okx_state import StateStore, atomic_write
-from .okx_storage import MIB, Scope, digest
-from .okx_trial import MINUTE, RULES, VERSION, Transition, Unavailable
+from . import cache as cache
+from .publish import GitHubPublisher, _git_blob, prepare_batch, publish_pending
+from .runtime import supervise
+from .scan import scan_job
+from .state import StateStore, atomic_write
+from .storage import MIB, Scope, digest
+from .trial import MINUTE, RULES, VERSION, Transition, Unavailable
 
 WORKFLOW = '.github/workflows/okx-live.yml'
-LEGACY = '.github/workflows/hourly-altcoin-alert.yml'
-ACTIVE = ('in_progress', 'queued', 'requested', 'waiting', 'pending')
 PROOF = re.compile(r'OKX_FINAL_V1 ([0-9a-f]{64}) ([0-9a-f]{64}) ([1-9][0-9]{0,18}) (0|[1-9][0-9]{0,18})')
 
 
@@ -114,13 +111,6 @@ def _context(root, *, writer_fence=True):
     if os.environ['MODE'] == 'live' and writer_fence:
         if os.environ.get('LIVE_ENABLED') != 'true' or os.environ['REBUILD'] != 'false':
             raise Unavailable('live_operator_gate_required')
-        legacy = _file(root, 'legacy.json')
-        if legacy.get('path') != LEGACY or legacy.get('state') != 'disabled_manually' or not cache._positive(legacy.get('id')):
-            raise Unavailable('live_legacy_writer_not_stopped')
-        for status in ACTIVE:
-            runs = _file(root, 'legacy-' + status + '.json')
-            if not isinstance(runs, dict) or type(runs.get('total_count')) is not int or runs['total_count'] != 0 or runs.get('workflow_runs') != []:
-                raise Unavailable('live_legacy_run_active_or_unknown')
     return current, scope
 
 
@@ -334,7 +324,7 @@ def prepare(root, *, now):
 def consume(root, *, now, transport=None):
     if (root / 'workspace').exists() or (root / 'workspace').is_symlink():
         raise ValueError('live_fresh_consumer_workspace_required')
-    current, scope = _context(root)  # Workflow refreshed the operator/legacy fence.
+    current, scope = _context(root)  # Workflow refreshed the operator gate.
     producer = cache.previous_run(current, _file(root, 'history.json'), scope=scope, workflow_path=WORKFLOW)
     previous_key = cache.live_key(scope, producer['id'], producer['head_sha'], 'final') if producer else ''
     if os.environ['MODE'] != 'live' or os.environ.get('PREVIOUS_KEY') != previous_key or os.environ.get('CACHE_HIT') != 'true':

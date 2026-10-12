@@ -3,7 +3,7 @@ from dataclasses import replace
 
 import pytest
 
-from crypto_boom import okx_trial as trial
+from crypto_boom import trial as trial
 
 T = 20 * trial.WEEK + 2 * trial.HOUR
 PRODUCT = trial.Product("SPOT", "ALT-USDT", "ALT", 1)

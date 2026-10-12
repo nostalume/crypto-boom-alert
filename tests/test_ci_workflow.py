@@ -19,15 +19,17 @@ def test_ci_is_one_readonly_lane_without_market_or_storage_effects():
     assert 'permissions' not in job and 'environment' not in job
     for step in job['steps']:
         if 'uses' in step:
-            assert step['uses'].startswith(('actions/checkout@', 'actions/setup-python@'))
+            assert step['uses'].startswith(('actions/checkout@', 'astral-sh/setup-uv@'))
             assert len(step['uses'].split('@')[1]) == 40
         else:
-            assert step['shell'] == 'bash' and '${{' not in step['run']
-    for forbidden in ('secrets.', 'GH_TOKEN', 'actions/cache', 'upload-artifact', 'crypto_boom.okx_live', 'okx_benchmark'):
+            assert step.get('shell', value['defaults']['run']['shell']) == 'bash' and '${{' not in step['run']
+    for forbidden in ('secrets.', 'GH_TOKEN', 'actions/cache', 'upload-artifact', 'crypto_boom.live', 'crypto_boom.benchmark'):
         assert forbidden not in raw
     assert 'persist-credentials: false' in raw and 'python-version: "3.12"' in raw
     assert 'pytest -q -p no:cacheprovider' in raw and '--select F,I,RUF100 src tests' in raw
-    assert '-r requirements.txt -r requirements-dev.txt' in raw
+    assert 'uv sync --locked --no-cache --no-python-downloads' in raw
+    assert 'python -m pytest' in raw
+    assert {'pyproject.toml', 'uv.lock'} <= set(value['on']['pull_request']['paths'])
 
 
 def test_ci_summary_records_both_checks_without_masking_failures():

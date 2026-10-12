@@ -8,10 +8,10 @@ from dataclasses import replace
 from decimal import Decimal
 
 import pytest
-from test_okx_trial import PRODUCT, T, row, snapshot
+from test_trial import PRODUCT, T, row, snapshot
 
-from crypto_boom import okx_data as data
-from crypto_boom import okx_trial as trial
+from crypto_boom import data as data
+from crypto_boom import trial as trial
 
 
 # Oracle from trial SHA23e59d3d: no fast paths or rewritten OHLC predicate.

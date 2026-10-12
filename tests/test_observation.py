@@ -4,11 +4,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
-import test_okx_live as fixtures
+import test_live as fixtures
 
-from crypto_boom import okx_live as live
-from crypto_boom.okx_storage import MIB
-from crypto_boom.okx_trial import MINUTE, VERSION
+from crypto_boom import live as live
+from crypto_boom.storage import MIB
+from crypto_boom.trial import MINUTE, VERSION
 
 START = fixtures.T
 END = START + 24 * 60 * MINUTE

@@ -1,5 +1,0 @@
-# Local/isolated manual shadow acceptance only; no production workflow change.
-pytest==9.1.1
-ruff==0.16.8
-PyYAML==6.0.3
-psutil==7.2.2

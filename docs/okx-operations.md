@@ -8,7 +8,7 @@ GitHub 定时任务可能延迟或漏触发，不承诺分钟级送达。
 
 `okx-live.yml` 手动默认 `preview`，不发行情提交；生产定时使用 `live`。
 `OKX_LIVE_ENABLED=true` 是生产开关。暂停应停用此 workflow，不取消正在发布的 job。
-切换前旧 writer 须停用且无在途任务；这是避免两个脚本同时改 README，不是旧策略验收。
+仓库只保留一个生产 writer；不要另外启动修改 README 的行情脚本。
 
 首次启动：确认专用 cache 完整清单为空，手动 `preview rebuild=true` 建立状态。
 必要时用 `preview rebuild=false` 续接下载；这只是冷启动，不要求 24 小时观察。
@@ -55,9 +55,20 @@ gh run view RUN_ID --repo nostalume/crypto-boom-alert --log
 `partial/deferred/warmup` 不能解释为没有异常，`complete` 也不是邮件到达证明。
 `OKX_TRANSITION_V1` 按事件 identity+stage 核对变化，ENDED 不发告警。
 
-离线检查：设置 `PYTHONPATH=src`，用 uv 安装 requirements.txt 和 requirements-dev.txt，
-运行 `python -m pytest -q -p no:cacheprovider`、`python -m ruff check --no-cache --select F,I,RUF100 src tests`。
+离线检查：`uv sync --locked`，设置 `PYTHONPATH=src`，
+运行 `uv run --locked --no-sync python -m pytest -q -p no:cacheprovider`、
+`uv run --locked --no-sync python -m ruff check --no-cache --select F,I,RUF100 src tests`。
+生产用 `uv sync --locked --no-dev`，不会安装 dev 组；`uv.lock` 是唯一完整依赖锁。
+依赖升级须显式执行 `uv lock --upgrade-package NAME` 并检查 diff、测试后再提交。
 CI 只执行离线检查，不扫描市场、不发布、不保存 cache/artifact。
+Actions 使用固定提交的官方 `astral-sh/setup-uv` 自动安装 uv 0.12.17，创建并激活 Python 3.12 环境；
+关闭依赖及 Python 的远程缓存，后续只运行已同步环境中的 `python -m`，不隐式重新解锁/安装。
+准备与发布两个 job 保留权限隔离；YAML anchors 仅复用完全相同的安装、额度检查和清理内容。
+Python 3.12 不在 runner 时可由 uv 下载，因此安装时延需线上实测，不承诺此次改动加速扫描。
 
 可选的有限 preview 输入 observation_start_ms、observation_end_ms、observation_digest 和离线 report 仍保留供诊断；
 它们不是上线前置。生产必须清空观察变量，不使用到期轮次作恢复基线。
+
+源码模块已去掉冗余前缀；workflow 路径及版本化缓存/回执标识保持不变。
+源码改名或删减会改变 cache 的代码摘要，不能直接续用旧摘要的缓存，
+也不能靠清空缓存跳过去重；发布这类变更前须完成保留账本的状态交接。

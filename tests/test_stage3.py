@@ -6,12 +6,12 @@ from types import MappingProxyType
 
 import httpx
 import pytest
-from test_okx_trial import PRODUCT, T, detector, row, snapshot
+from test_trial import PRODUCT, T, detector, row, snapshot
 
-from crypto_boom import okx_data as data
-from crypto_boom import okx_state as state
-from crypto_boom import okx_trial as trial
-from crypto_boom.okx_scan import scan
+from crypto_boom import data as data
+from crypto_boom import state as state
+from crypto_boom import trial as trial
+from crypto_boom.scan import scan
 
 
 class Clock:
@@ -399,19 +399,19 @@ def test_state_oversize_and_generation_type_fail_closed(tmp_path):
 
 
 def test_shadow_cli_refuses_notification_enabled_workspace_before_http(tmp_path,monkeypatch):
-    from crypto_boom import okx_scan
+    from crypto_boom import scan
     store=state.StateStore(tmp_path/'checkpoint.json')
     checkpoint=state.Checkpoint()
     with store.writer():
         store.save(checkpoint,None)
         checkpoint.notifications_enabled=True
         store.save(checkpoint,1)
-    monkeypatch.setattr('sys.argv',['okx_scan','--workspace',str(tmp_path)])
+    monkeypatch.setattr('sys.argv',['scan','--workspace',str(tmp_path)])
     def forbidden(*args,**kwargs):
         raise AssertionError('No HTTP permitted after shadow workspace rejection')
-    monkeypatch.setattr(okx_scan,'PublicClient',forbidden)
+    monkeypatch.setattr(scan,'PublicClient',forbidden)
     with pytest.raises(trial.Unavailable,match='shadow_workspace_required'):
-        okx_scan.main()
+        scan.main()
     assert store.load()[0].generation==2
 
 

@@ -6,10 +6,10 @@ from json import dumps
 import httpx
 import pytest
 
-from crypto_boom import okx_publish as publication
-from crypto_boom.okx_state import Checkpoint, StateStore
-from crypto_boom.okx_storage import DAY, MIB, Scope, digest, parse_public_receipt
-from crypto_boom.okx_trial import MINUTE, VERSION, Transition, Unavailable
+from crypto_boom import publish as publication
+from crypto_boom.state import Checkpoint, StateStore
+from crypto_boom.storage import DAY, MIB, Scope, digest, parse_public_receipt
+from crypto_boom.trial import MINUTE, VERSION, Transition, Unavailable
 
 T = 1780000020000
 SCOPE = Scope("nostalume/crypto-boom-alert", 456, "refs/heads/codex/notification-test")
