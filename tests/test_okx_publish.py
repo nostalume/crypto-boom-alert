@@ -435,6 +435,31 @@ def test_markdown_symbols_cannot_turn_product_into_link_or_emphasis():
     assert "[币_种*](example)" not in text
 
 
+def test_priority_then_base_grouping_preserves_product_direction_and_receipt():
+    changes = [change('ZZZ-USDT', at=T - 31 * MINUTE),
+               change('BBB-USDT'), change('AAA-USDT-SWAP', kind='SWAP', direction='DOWN'),
+               change('AAA-USDT'), change('CCC-USDT', stage='PERSISTENT', first=T - 10 * MINUTE)]
+    result = rendered(changes)
+    rows = [r for r in result.readme.decode().splitlines() if r.startswith('| ')
+            and ('| SPOT |' in r or '| SWAP |' in r)]
+    assert [r.split(' | ')[1] for r in rows] == ['CCC-USDT', 'AAA-USDT', 'AAA-USDT-SWAP', 'BBB-USDT', 'ZZZ-USDT']
+    assert '| AAA | AAA-USDT-SWAP | SWAP | DOWN |' in rows[2]
+    assert '| AAA | AAA-USDT | SPOT | UP |' in rows[1]
+    receipt = parse_public_receipt(result.marker, scope=SCOPE, source_sha=SOURCE, run_id=7, attempt=1, published_at=T)
+    assert len(receipt.ids) == len(changes)
+    assert rendered(list(reversed(changes))).readme == result.readme
+
+
+def test_render_is_presentation_only_and_thirty_minute_boundary_is_exact():
+    state = Checkpoint(generation=3, at=T, notifications_enabled=True)
+    ids = state.prepare([change('TIMELY-USDT', at=T - 30 * MINUTE), change('OLD-USDT', at=T - 31 * MINUTE)], T)
+    before = state.encode()
+    result = publication.render(state, ids, scope=SCOPE, source_sha=SOURCE, run_id=7, attempt=1,
+                                readme=README, observed_at=T)
+    assert state.encode() == before
+    assert result.readme.index(b'TIMELY-USDT') < result.readme.index(b'OLD-USDT')
+
+
 def test_provider_success_is_observed_commit_not_email_delivery(tmp_path):
     store, provider = seeded(tmp_path), Provider()
     with store.writer():

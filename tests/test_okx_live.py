@@ -610,3 +610,146 @@ def test_observation_time_is_taken_after_scan(fixture, monkeypatch):
     result = read(root, 'result.json')
     assert result['observed_at'] == NOW + 2 * MINUTE
     assert result['cutoff_age_ms'] == 2 * MINUTE + 3000
+
+
+def window_env(monkeypatch, start=NOW - MINUTE, end=NOW + 23 * 60 * MINUTE):
+    for key, value in {'START_MS': start, 'END_MS': end, 'DIGEST': live.observation_digest()}.items():
+        monkeypatch.setenv('OBSERVATION_' + key, str(value))
+
+
+@pytest.mark.parametrize('offset,status,stop', [(-1, 'before_window', ''), (0, 'open', ''),
+                                              (23 * 60 * MINUTE - 15 * MINUTE, 'draining', ''),
+                                              (23 * 60 * MINUTE, 'expired', 456)])
+def test_window_gate_boundaries_authenticate_stop_target(fixture, monkeypatch, offset, status, stop):
+    root, _, _ = fixture
+    window_env(monkeypatch, start=NOW, end=NOW + 23 * 60 * MINUTE)
+    live.window_gate(root, now=NOW + offset)
+    outputs = (root.parent / 'outputs').read_text()
+    assert f'window_open={str(status == "open").lower()}\n' in outputs
+    assert f'stop_workflow_id={stop}\n' in outputs
+    if status != 'open':
+        assert read(root, 'result.json')['status'] == status
+    assert not (root / 'workspace').exists() and not (root / 'export.json').exists()
+
+
+@pytest.mark.parametrize('key,value', [('END_MS', str(NOW - 2 * MINUTE)), ('END_MS', str(NOW + 25 * 60 * MINUTE)),
+                                      ('START_MS', ''), ('DIGEST', 'x' * 64)])
+def test_invalid_window_has_no_admitted_scan(fixture, monkeypatch, key, value):
+    root, _, _ = fixture
+    window_env(monkeypatch)
+    monkeypatch.setenv('OBSERVATION_' + key, value)
+    with pytest.raises(ValueError, match='observation_window_inputs'):
+        live.select(root)
+    assert not (root / 'workspace').exists()
+
+
+def test_window_rejects_live_and_code_drift_and_schedule_without_window(fixture, monkeypatch):
+    root, _, _ = fixture
+    monkeypatch.setenv('GITHUB_EVENT_NAME', 'schedule')
+    with pytest.raises(Unavailable, match='schedule_requires_window'):
+        live.check_window(now=NOW)
+    monkeypatch.setenv('GITHUB_EVENT_NAME', 'workflow_dispatch')
+    window_env(monkeypatch)
+    monkeypatch.setenv('MODE', 'live')
+    with pytest.raises(ValueError, match='window_inputs'):
+        live.check_window(now=NOW)
+    monkeypatch.setenv('MODE', 'preview')
+    monkeypatch.setenv('OBSERVATION_DIGEST', 'b' * 64)
+    with pytest.raises(Unavailable, match='code_or_workflow_changed'):
+        live.select(root)
+    assert not (root / 'selection.json').exists()
+
+
+def test_expiry_blocks_scan_and_save_but_not_exact_cleanup(fixture, monkeypatch):
+    root, seed, _ = fixture
+    seed()
+    live.select(root)
+    live.admit(root)
+    live.prepare(root, now=NOW)
+    proof = read(root, 'export.json')
+    write(root, 'caches.json', listing(record(123, 'final'), record(124, 'final', 1)))
+    window_env(monkeypatch, start=NOW - 22 * 60 * MINUTE, end=NOW)
+    with pytest.raises(Unavailable, match='closed_or_insufficient_time'):
+        live.prepare(root, now=NOW)
+    with pytest.raises(Unavailable, match='closed_or_insufficient_time'):
+        live.guard_save(root)
+    live.plan_cleanup(root, now=NOW)
+    live.check_cleanup(root, 124)
+    assert read(root, 'export.json') == proof
+
+
+def test_window_scan_failure_stops_only_authenticated_candidate(fixture, monkeypatch):
+    root, _, _ = fixture
+    window_env(monkeypatch)
+    monkeypatch.setenv('GITHUB_STEP_SUMMARY', str(root / 'summary.md'))
+    monkeypatch.setattr(sys, 'argv', ['okx_live', 'summary', '--root', str(root)])
+    live.main()
+    assert 'stop_workflow_id=456' in (root.parent / 'outputs').read_text()
+    body = read(root, 'current.json')
+    body['workflow_id'] = 999
+    body['path'] = live.LEGACY
+    write(root, 'current.json', body)
+    (root.parent / 'outputs').write_text('')
+    with pytest.raises(ValueError, match='untrusted_run'):
+        live.main()
+    assert not (root.parent / 'outputs').read_text()
+
+
+def test_window_predecessor_failure_never_starts_diagnostic_scan(fixture, monkeypatch):
+    root, _, _ = fixture
+    window_env(monkeypatch)
+    with pytest.raises(Unavailable, match='exact_predecessor_cache_missing'):
+        live.select(root)
+    assert not (root / 'workspace').exists()
+
+
+def test_window_expiring_during_scan_does_not_export(fixture, monkeypatch):
+    root, seed, _ = fixture
+    seed()
+    window_env(monkeypatch, end=NOW + 16 * MINUTE)
+    live.select(root)
+    live.admit(root)
+    monkeypatch.setattr(live.time, 'time', lambda: (NOW + 15 * MINUTE) / 1000)
+    with pytest.raises(Unavailable, match='closed_or_insufficient_time'):
+        live.prepare(root, now=NOW)
+    assert not (root / 'export.json').exists() and not (root / 'result.json').exists()
+
+
+def test_finite_workflow_is_manual_and_stop_permission_scope_is_unchanged():
+    path = Path(__file__).parents[1] / live.WORKFLOW
+    text = path.read_text(encoding='utf-8')
+    workflow = yaml.safe_load(text)
+    assert set(workflow['on']) == {'workflow_dispatch'}
+    prepare = workflow['jobs']['prepare']
+    assert prepare['permissions'] == {'contents': 'read', 'actions': 'write'}
+    steps = prepare['steps']
+    stop = next(s for s in steps if s.get('name') == 'Stop only this finite observation workflow')
+    assert 'steps.disposition.outputs.stop_workflow_id' in stop['if'] and stop['if'].startswith('always()')
+    assert '"$path" == .github/workflows/okx-live.yml' in stop['run']
+    assert 'disabled_manually' in stop['run'] and '/disable' in stop['run']
+    assert next(s for s in steps if s.get('name') == 'Save explicit intent or quiet final')['timeout-minutes'] == 2
+
+
+def test_startup_gate_does_not_require_not_yet_fetched_live_fences(fixture, monkeypatch):
+    root, _, _ = fixture
+    monkeypatch.setenv('MODE', 'live')
+    (root / 'legacy.json').unlink()
+    live.window_gate(root, now=NOW)
+    assert 'window_open=true' in (root.parent / 'outputs').read_text()
+    # Only admission is open; the real select still requires fresh writer fences.
+    with pytest.raises(ValueError, match='cache_regular_file_required'):
+        live.select(root)
+
+
+def test_window_fingerprint_freezes_workflow_not_readme_and_normalizes_lf(tmp_path, monkeypatch):
+    workflow = tmp_path / live.WORKFLOW
+    workflow.parent.mkdir(parents=True)
+    workflow.write_bytes(b'name: finite\n')
+    monkeypatch.setattr(live, '__file__', str(tmp_path / 'src/crypto_boom/okx_live.py'))
+    monkeypatch.setattr(cache, 'code_digest', lambda: 'b' * 64)
+    fingerprint = live.observation_digest()
+    workflow.write_bytes(b'name: finite\r\n')
+    (tmp_path / 'README.md').write_text('ordinary market commit')
+    assert live.observation_digest() == fingerprint
+    workflow.write_bytes(b'name: changed\n')
+    assert live.observation_digest() != fingerprint

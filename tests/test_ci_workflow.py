@@ -40,12 +40,13 @@ def test_ci_summary_records_both_checks_without_masking_failures():
     assert set(summary['env']) == {'TEST_OUTCOME', 'LINT_OUTCOME'}
 
 
-def test_operations_guide_does_not_present_future_cutover_as_current():
+def test_operations_guide_describes_direct_start_and_fail_closed_recovery():
     raw = (ROOT / 'docs/okx-operations.md').read_text(encoding='utf-8')
-    for phrase in ('没有定时任务', '不是已执行操作', '需要明确运行授权', 'pending/unknown',
-                   '不自动重发或清账本', '先停新 writer', '不是送达回执', '未获线上运行验收'):
+    for phrase in ('不要求 24 小时观察', '未知发布', '盲目重发', '先停新 writer',
+                   '不等于邮件已经送达', '0 停用预算', '先暂停 workflow'):
         assert phrase in raw
-    assert "PYTHONPATH = 'src'" in raw
+    assert 'PYTHONPATH=src' in raw
     candidate = yaml.safe_load((ROOT / '.github/workflows/okx-live.yml').read_text(encoding='utf-8'))
     assert set(candidate['on']) == {'workflow_dispatch'}
-    assert all(key in raw for key in candidate['on']['workflow_dispatch']['inputs'])
+    assert all(key in raw for key in ('preview', 'live', 'rebuild', 'arm_manifest',
+                                     'observation_start_ms', 'observation_end_ms', 'observation_digest'))

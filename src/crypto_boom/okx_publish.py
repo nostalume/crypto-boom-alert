@@ -79,18 +79,22 @@ def render(checkpoint, ids, *, scope, source_sha, run_id, attempt, readme, obser
                 or not 0 <= observed_at - item["transition_at"] <= DAY):
             raise ValueError("publication_identity_or_age")
         age = (observed_at - item["transition_at"]) // MINUTE
-        label = "及时 / TIMELY" if observed_at - item["transition_at"] <= 30 * MINUTE else "延迟回补 / BACKFILL"
+        timely = observed_at - item["transition_at"] <= 30 * MINUTE
+        label = "及时 / TIMELY" if timely else "延迟回补 / BACKFILL"
         stages.add(stage)
-        rows.append(f"| {_display(symbol)} | {kind} | {direction} | {rule.rsplit('/', 1)[1]} | {stage} | "
-                    f"{_utc(first)} | {_utc(item['transition_at'])} | {age}m · {label} |")
+        base = symbol.removesuffix('-SWAP').removesuffix('-USDT')
+        rows.append(((not timely, stage != 'PERSISTENT', base, kind, key),
+                     f"| {_display(base)} | {_display(symbol)} | {kind} | {direction} | {rule.rsplit('/', 1)[1]} | {stage} | "
+                     f"{_utc(first)} | {_utc(item['transition_at'])} | {age}m · {label} |"))
     local = datetime.fromtimestamp(observed_at / 1000, timezone(timedelta(hours=8))).strftime("%Y-%m-%d %H:%M:%S")
     section = "\n".join([
         START, "## 最近 OKX 告警 / Latest alerts", "",
         f"源数据截止：{_utc(checkpoint.at)}。本批生成：{_utc(observed_at)} / 上海 {local}。",
         "仅记录价量异常；UP/DOWN 是观测方向，不是买卖建议。PERSISTENT 表示持续条件，不代表收益确认。",
         "本页不是实时扫描健康状态；无新告警不更新，扫描覆盖/失败请查看 Actions summary。", "",
-        "| 标的 | 市场 | 方向 | 规则 | 阶段 | 首次条件 | 本次条件 | 条件年龄 |",
-        "|---|---|---|---|---|---|---|---|", *rows, "", marker, END,
+        "展示顺序：及时项优先、同类持续项优先，再按币种分组；现货/永续保留独立事实，不是收益概率排名。", "",
+        "| 币种分组 | 标的 | 市场 | 方向 | 规则 | 阶段 | 首次条件 | 本次条件 | 条件年龄 |",
+        "|---|---|---|---|---|---|---|---|---|", *(row for _, row in sorted(rows)), "", marker, END,
     ])
     text = readme.decode("utf-8")
     if not text.count(START) and not text.count(END):
