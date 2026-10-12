@@ -85,7 +85,7 @@ def test_report_orders_runs_keeps_markets_and_stages_separate_without_mail_claim
 
 
 @pytest.mark.parametrize('fault', ['failed', 'missing_jobs', 'false_proof', 'wrong_digest', 'blocked',
-                                  'no_summary', 'coverage', 'wrong_run', 'age', 'nan', 'duplicate_run', 'consumer_ran'])
+                                  'no_summary', 'coverage', 'wrong_run', 'age', 'nan', 'consumer_ran'])
 def test_invalid_sample_is_not_healthy_and_ends_continuous_segment(tmp_path, fault):
     sample(tmp_path, 1)
     path, summary = sample(tmp_path, 2)
@@ -118,12 +118,37 @@ def test_invalid_sample_is_not_healthy_and_ends_continuous_segment(tmp_path, fau
         for job in jobs['jobs']:
             job['head_sha'] = summary['source_sha']
         put(path, 'jobs.json', jobs)
-    else:
-        put(path, 'run.json', json.loads((tmp_path / '0001/run.json').read_text()))
     value = report(tmp_path)
     assert value['valid_samples'] == 2
     assert value['continuous_samples'] <= 1
     assert len([r for r in value['runs'] if not r['valid']]) == 1
+
+
+
+@pytest.mark.parametrize('reverse', [False, True])
+@pytest.mark.parametrize('consistent', [False, True])
+def test_duplicate_snapshots_never_count_twice_in_either_directory_order(tmp_path, monkeypatch, reverse, consistent):
+    first, _ = sample(tmp_path, 1)
+    duplicate, _ = sample(tmp_path, 2)
+    sample(tmp_path, 3)
+    # A real duplicate copies the entire provider snapshot, not only run.json.
+    # A mixed snapshot additionally has mismatched jobs/logs and must be rejected.
+    for name in (('run.json', 'jobs.json', 'prepare.log') if consistent else ('run.json',)):
+        (duplicate / name).write_bytes((first / name).read_bytes())
+    original = Path.iterdir
+    paths = sorted(original(tmp_path), reverse=reverse)
+    monkeypatch.setattr(Path, 'iterdir', lambda path: iter(paths) if path == tmp_path else original(path))
+    value = report(tmp_path)
+    invalid = [r for r in value['runs'] if not r['valid']]
+    assert value['samples'] == 3 and value['continuous_samples'] <= 1
+    if consistent:
+        assert value['valid_samples'] == 2 and len(invalid) == 1
+        assert invalid[0]['reason'] == 'observation_duplicate_run'
+    else:
+        assert 1 <= value['valid_samples'] <= 2
+        assert any(r['directory'] == '0002' for r in invalid)
+    valid_ids = [r['run_id'] for r in value['runs'] if r['valid']]
+    assert len(valid_ids) == len(set(valid_ids))
 
 
 def test_missing_run_or_state_handoff_is_reported_not_invented(tmp_path):

@@ -411,7 +411,7 @@ def test_production_workflow_has_bounded_schedule_and_no_inline_untrusted_code()
     raw = (root / live.WORKFLOW).read_text(encoding='utf-8')
     value = yaml.safe_load(raw)
     assert set(value['on']) == {'workflow_dispatch', 'schedule'}
-    assert value['on']['schedule'] == [{'cron': '3-59/10 * * * *'}]
+    assert value['on']['schedule'] == [{'cron': '3,13,23,33,43,53 * * * *'}]
     assert value['env']['MODE'] == "${{ github.event_name == 'schedule' && 'live' || inputs.mode || 'preview' }}"
     assert value['permissions'] == {} and value['concurrency']['cancel-in-progress'] is False
     assert value['on']['workflow_dispatch']['inputs']['mode']['default'] == 'preview'
