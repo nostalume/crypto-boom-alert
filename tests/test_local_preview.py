@@ -188,7 +188,7 @@ def test_metadata_failure_keeps_previous_checkpoint_and_report(tmp_path, monkeyp
     run_preview(tmp_path, monkeypatch, capsys)
     before = {name: (tmp_path / name).read_bytes() for name in ('checkpoint.json', 'scan-report.json', 'preview.txt')}
     (tmp_path / '.fixture-fail-metadata').touch()
-    with pytest.raises(data.BudgetExceeded):
+    with pytest.raises(trial.Unavailable, match='transport:ConnectError'):
         run_preview(tmp_path, monkeypatch, capsys, at=T + trial.MINUTE)
     assert before == {name: (tmp_path / name).read_bytes() for name in before}
     assert not (tmp_path / 'checkpoint.json.lock').exists()

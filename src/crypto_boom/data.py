@@ -71,7 +71,7 @@ class Budget:
                 raise BudgetExceeded("byte_budget")
             if self.attempts >= self.max_requests:
                 raise BudgetExceeded("request_budget")
-            if retry and self.retries >= self.initial // 5:
+            if retry and self.retries >= max(2, self.initial // 5):
                 raise BudgetExceeded("retry_budget")
             due = max(self.backoff_until, self.next_market if market else self.next_public)
             wait = max(0, due - self.clock())
@@ -168,9 +168,10 @@ class PublicClient:
             except httpx.TransportError as exc:
                 failure = type(exc).__name__
                 retry_delay = 2 ** attempt
-                self.budget.backoff(retry_delay)
                 if attempt == 2:
                     raise Unavailable("transport:" + failure) from exc
+                # A broken connection belongs to this worker, not every public request.
+                self.budget.sleep(min(retry_delay, max(0, self.budget.remaining())))
             except (Unavailable, BudgetExceeded) as exc:
                 failure = str(exc)
                 if retry_delay is None or attempt == 2 or isinstance(exc, BudgetExceeded):

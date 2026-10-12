@@ -81,7 +81,7 @@ def _refresh_series(client, product, series, required, at, *, retain_partial=Non
     end = (at // grain) * grain
     required = max(0, required)
     known = set(series.bars) | set(series.errors)
-    if grain == HOUR and all(t in known for t in range(required, end, grain)):
+    if grain != MINUTE and all(t in known for t in range(required, end, grain)):
         return series
     original = series
     def remember_partial(part):
@@ -143,7 +143,7 @@ def scan(products: list[Product], at: int, cache: ProductCache, state: Checkpoin
     by_key = {p.key: p for p in products}
     reports, transitions, processed_cold = [], [], []
 
-    def work(chunk, bootstrap):
+    def work(pending, bootstrap):
         nonlocal accepted
         local_reports, local_changes, local_states = [], [], []
         def record(row):
@@ -152,7 +152,11 @@ def scan(products: list[Product], at: int, cache: ProductCache, state: Checkpoin
                 with capacity_lock:
                     progress['processed'] += 1
         with PublicClient(budget, transport=transport) as client:
-            for product in chunk:
+            while True:
+                with capacity_lock:
+                    product = next(pending, None)
+                if product is None:
+                    break
                 key = ("A0", product.key)
                 previous = state.tracker.last_at.get(key)
                 first = at if previous is None else max(previous + MINUTE, at - 24 * HOUR + MINUTE)
@@ -282,9 +286,9 @@ def scan(products: list[Product], at: int, cache: ProductCache, state: Checkpoin
         pool = cold if bootstrap else warm
         if not pool:
             continue
-        chunks = [pool[i::workers] for i in range(workers) if pool[i::workers]]
+        pending = iter(pool)
         with ThreadPoolExecutor(max_workers=workers) as executor:
-            futures = [executor.submit(work, chunk, bootstrap) for chunk in chunks]
+            futures = [executor.submit(work, pending, bootstrap) for _ in range(min(workers, len(pool)))]
             for future in futures:
                 rows, changes, updates = future.result()
                 for row in rows:

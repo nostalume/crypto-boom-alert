@@ -113,8 +113,6 @@ def test_allowlist_rejects_account_before_effect():
 
 def test_429_shared_backoff_and_transport_retry():
     b, clock = budget()
-    for _ in range(10):
-        b.admit("/api/v5/market/candles")
     attempts = []
     def handle(request):
         attempts.append(clock.now)
@@ -127,6 +125,21 @@ def test_429_shared_backoff_and_transport_retry():
         assert client.get("/api/v5/market/candles") == []
     assert attempts[1] - attempts[0] >= 3 and attempts[2] - attempts[1] >= 2
     assert b.retries == 2 and len(b.observations) == 3
+
+
+def test_startup_transport_retry_is_local_and_remains_bounded():
+    b, clock = budget()
+    calls = []
+    def handle(request):
+        calls.append(clock.now)
+        raise httpx.ConnectError('fixture offline', request=request)
+    with data.PublicClient(b, transport=httpx.MockTransport(handle)) as client:
+        with pytest.raises(trial.Unavailable, match='transport:ConnectError'):
+            client.get('/api/v5/public/time')
+    assert len(calls) == 3 and b.retries == 2 and b.attempts == 3
+    assert b.backoff_until == b.started  # Connection failure must not pause other workers.
+    with pytest.raises(data.BudgetExceeded, match='retry_budget'):
+        b.admit('/api/v5/public/time', retry=True)
 
 
 @pytest.mark.parametrize("kwargs,reason", [({"max_response": 10}, "response_budget"), ({"max_bytes": 10}, "byte_budget")])

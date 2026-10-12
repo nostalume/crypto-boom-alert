@@ -1,5 +1,6 @@
 """Mandatory-pool barrier and optional hourly context; zero real HTTP."""
 import threading
+from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
 from dataclasses import asdict, replace
 from types import SimpleNamespace
@@ -136,6 +137,47 @@ def test_cached_current_hour_needs_no_optional_request():
     assert len(calls) == 4 and report["hour_context_counts"] == {"cached": 2}
     assert all(r["hour_context"]["asof"] == T for r in report["products"])
     assert all(count == 1 for count in cache.loads.values())
+
+
+def test_warm_minute_scan_reuses_complete_five_background_without_changing_events():
+    products, cache, checkpoint, calls, handle, minute, common = fixture(8, previous=T-trial.MINUTE)
+    expected = deepcopy(checkpoint.tracker)
+    for p in products:
+        series = dict(cache.snapshots[p.key].series)
+        series[trial.FIVE] = trial.Series.parse(common[trial.FIVE], trial.FIVE)
+        cache.snapshots[p.key] = data.Snapshot(p, T-trial.MINUTE, series)
+        detector = trial.Detector(p, trial.Series.parse(minute[p.key], trial.MINUTE),
+                                  series[trial.FIVE], series[trial.HOUR], rules=('A0',))
+        expected.apply(detector.evaluate(T)[0])
+    b, _ = budget(max_requests=8)
+    report = scan(products, T, cache, checkpoint, b, transport=httpx.MockTransport(handle))
+    assert report['complete'] == 8 and report['partial'] == report['deferred'] == 0
+    assert len(calls) == 8 and all(kind == '1m' for kind, _ in calls)
+    assert asdict(checkpoint.tracker) == asdict(expected)
+
+
+def test_slow_connection_does_not_strand_a_fixed_worker_group():
+    products, cache, checkpoint, calls, handle, _, _ = fixture(8)
+    entered, release, others_done = threading.Event(), threading.Event(), threading.Event()
+    def blocking(request):
+        if request.url.params['instId'] == products[0].inst_id:
+            entered.set()
+            assert release.wait(5)
+        result = handle(request)
+        with cache.lock:
+            if len({symbol for kind, symbol in calls if kind == '5m' and symbol != products[0].inst_id}) == 7:
+                others_done.set()
+        return result
+    b, _ = budget()
+    with ThreadPoolExecutor(max_workers=1) as runner:
+        future = runner.submit(scan, products, T, cache, checkpoint, b,
+                               transport=httpx.MockTransport(blocking))
+        try:
+            assert entered.wait(2) and others_done.wait(2)
+        finally:
+            release.set()
+        report = future.result(timeout=5)
+    assert report['complete'] == 8 and report['partial'] == report['deferred'] == 0
 
 
 @pytest.mark.parametrize("age,candidate", [(30, True), (31, False)])
