@@ -1,6 +1,8 @@
 name: OKX altcoin alert
 
 "on":
+  schedule:
+    - cron: '3-59/10 * * * *'
   workflow_dispatch:
     inputs:
       mode:
@@ -94,68 +96,7 @@ jobs:
           timeout 30s gh api "repos/$GITHUB_REPOSITORY/actions/workflows/$workflow/runs?per_page=100" > "$WORKROOT/history.json"
           timeout 30s gh api "repos/$GITHUB_REPOSITORY/actions/cache/usage" > "$WORKROOT/usage.json" || printf '{}' > "$WORKROOT/usage.json"
           timeout 30s gh api "repos/$GITHUB_REPOSITORY/actions/caches?key=okx-live-cache-v1-w$workflow-&per_page=100" > "$WORKROOT/caches.json" || printf '{}' > "$WORKROOT/caches.json"
-          if [[ "$MODE" == live ]]; then
-            python -m crypto_boom.live select --root "$WORKROOT"
-          else
-            timeout 30s gh api "repos/$GITHUB_REPOSITORY/actions/runs/38197817485" > "$WORKROOT/failed-run.json"
-            timeout 30s gh api "repos/$GITHUB_REPOSITORY/actions/runs/38197817485/attempts/1/jobs?per_page=100" > "$WORKROOT/failed-jobs.json"
-            cat > "$WORKROOT/repair.py" <<'PY'
-          import json, os
-          from pathlib import Path
-          from crypto_boom import cache, live
-          from crypto_boom.trial import Unavailable
-          EXPECTED_JOBS = {'total_count': 2, 'jobs': [{'id': 114644344291, 'name': 'prepare', 'run_id': 38197817485, 'head_sha': 'fe68e046cc8af3af6cea4600416416e6dcb91bc5', 'head_branch': 'main', 'status': 'completed', 'conclusion': 'failure', 'steps': [{'number': 1, 'name': 'Set up job', 'status': 'completed', 'conclusion': 'success'}, {'number': 2, 'name': 'Run actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd', 'status': 'completed', 'conclusion': 'success'}, {'number': 3, 'name': 'Run astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884', 'status': 'completed', 'conclusion': 'success'}, {'number': 4, 'name': 'Install locked runtime only', 'status': 'completed', 'conclusion': 'success'}, {'number': 5, 'name': 'Select immediate predecessor', 'status': 'completed', 'conclusion': 'success'}, {'number': 6, 'name': 'Read independent producer proof', 'status': 'completed', 'conclusion': 'success'}, {'number': 7, 'name': 'Restore exact previous final', 'status': 'completed', 'conclusion': 'success'}, {'number': 8, 'name': 'Read fixed legacy validator for one non-notifying handoff', 'status': 'completed', 'conclusion': 'success'}, {'number': 9, 'name': 'Scan and prepare bounded state', 'status': 'completed', 'conclusion': 'failure'}, {'number': 10, 'name': 'Check free headroom before save', 'status': 'completed', 'conclusion': 'skipped'}, {'number': 11, 'name': 'Save explicit intent or quiet final', 'status': 'completed', 'conclusion': 'skipped'}, {'number': 12, 'name': 'run', 'status': 'completed', 'conclusion': 'skipped'}, {'number': 13, 'name': 'Show scan coverage and notification disposition', 'status': 'completed', 'conclusion': 'success'}, {'number': 14, 'name': 'Stop only this finite observation workflow', 'status': 'completed', 'conclusion': 'skipped'}, {'number': 26, 'name': 'Post Read fixed legacy validator for one non-notifying handoff', 'status': 'completed', 'conclusion': 'success'}, {'number': 27, 'name': 'Post Run astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884', 'status': 'completed', 'conclusion': 'skipped'}, {'number': 28, 'name': 'Post Run actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd', 'status': 'completed', 'conclusion': 'success'}, {'number': 29, 'name': 'Complete job', 'status': 'completed', 'conclusion': 'success'}]}, {'id': 114644403762, 'name': 'consume', 'run_id': 38197817485, 'head_sha': 'fe68e046cc8af3af6cea4600416416e6dcb91bc5', 'head_branch': 'main', 'status': 'completed', 'conclusion': 'skipped', 'steps': []}]}
-          EXPECTED_CACHE = {'id': 8811664417, 'ref': 'refs/heads/main', 'key': 'okx-live-cache-v1-w381273193-r38188949885-a1-ace1386709499685df70d4467574c36b02cb5335-final', 'version': '1a487f95ca972d66fc910935a119ae04e9246106c6268f43ce48d9b639726760', 'created_at': '2026-10-12T00:44:11.749639Z', 'size_in_bytes': 28456852}
-          FAILED_SHA = 'fe68e046cc8af3af6cea4600416416e6dcb91bc5'
-          OLD_SHA = 'ace1386709499685df70d4467574c36b02cb5335'
-
-          def reconciled_selection(current, history, failed, jobs, records, scope):
-              try:
-                  cache.previous_run(current, history, scope=scope, workflow_path=live.WORKFLOW)
-              except Unavailable as exc:
-                  if str(exc) != 'live_immediate_predecessor_not_successful':
-                      raise
-              else:
-                  raise ValueError('repair_requires_exact_failed_predecessor')
-              cache._live_run(failed, scope, live.WORKFLOW)
-              if (failed['id'] != 38197817485 or failed['head_sha'] != FAILED_SHA
-                      or failed['run_number'] != 7 or failed['status'] != 'completed'
-                      or failed['conclusion'] != 'failure' or current['run_number'] != 8
-                      or failed not in history['workflow_runs']):
-                  raise ValueError('repair_failed_run_identity')
-              fields = ('id','name','run_id','head_sha','head_branch','status','conclusion')
-              signature = {'total_count': jobs['total_count'], 'jobs': [
-                  {**{k:j[k] for k in fields}, 'steps': [{k:s[k] for k in
-                      ('number','name','status','conclusion')} for s in j['steps']]}
-                  for j in jobs['jobs']]}
-              if signature != EXPECTED_JOBS:
-                  raise ValueError('repair_failed_run_effects_changed')
-              old = next((r for r in history['workflow_runs'] if r['run_number']==6), None)
-              cache._live_run(old, scope, live.WORKFLOW)
-              if (old['id'] != 38188949885 or old['head_sha'] != OLD_SHA
-                      or old['status'] != 'completed' or old['conclusion'] != 'success'):
-                  raise ValueError('repair_original_producer_identity')
-              previous = cache.live_key(scope, old['id'], old['head_sha'], 'final')
-              if set(records) != {previous} or any(records[previous].get(k) != v for k,v in EXPECTED_CACHE.items()):
-                  raise ValueError('repair_original_cache_changed')
-              return {'producer': old.copy(), 'previous_key': previous, 'persist': True, 'blocked': None}
-
-          if __name__ == '__main__':
-              if os.environ.get('MODE') != 'preview' or os.environ.get('REBUILD') != 'false':
-                  raise ValueError('repair_nonnotifying_only')
-              root = Path(os.environ['RUNNER_TEMP'])/'okx-live'
-              current, scope = live._context(root)
-              live.check_window(reserve_ms=15*live.MINUTE)
-              records = cache.live_inventory(live._file(root,'caches.json'),live._file(root,'usage.json'),scope=scope,max_existing=1)
-              selected = reconciled_selection(current, live._file(root,'history.json'), live._file(root,'failed-run.json'),
-                                              live._file(root,'failed-jobs.json'), records, scope)
-              live._write(root,'selection.json',selected)
-              live._write(root,'repair-receipt.json',{'bypassed_nonmutating_run':38197817485,'original_producer':38188949885})
-              live._outputs({'persist':'true','restore_key':selected['previous_key'],'producer_run':38188949885})
-              print('OKX_REPAIR_V1 bypassed_nonmutating_run=38197817485 original_producer=38188949885')
-          PY
-            python "$WORKROOT/repair.py"
-          fi
+          python -m crypto_boom.live select --root "$WORKROOT"
       - name: Read independent producer proof
         if: steps.selected.outputs.window_open == 'true'
         id: proof
@@ -177,13 +118,6 @@ jobs:
           path: ${{ runner.temp }}/okx-live/transfer
           key: ${{ steps.selected.outputs.restore_key }}
           fail-on-cache-miss: false # CLI permits only non-persisting preview diagnostics on a miss.
-      - name: Read fixed legacy validator for one non-notifying handoff
-        if: env.MODE == 'preview'
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          ref: ace1386709499685df70d4467574c36b02cb5335
-          path: .migration-source
-          persist-credentials: false
       - name: Scan and prepare bounded state
         if: steps.selected.outputs.window_open == 'true'
         id: scan
@@ -198,67 +132,7 @@ jobs:
             [[ "$head" =~ ^[0-9a-f]{40}$ ]]
             timeout 30s gh api "repos/$GITHUB_REPOSITORY/contents/README.md?ref=$head" > "$WORKROOT/target-readme.json"
           fi
-          if [[ "$MODE" == live ]]; then
-            python -m crypto_boom.live prepare --root "$WORKROOT"
-          else
-            cat > "$WORKROOT/handoff.py" <<'PY'
-          import json, os, subprocess, sys
-          from dataclasses import asdict
-          from pathlib import Path
-          from crypto_boom import cache, live
-          from crypto_boom.state import StateStore
-
-          OLD_SOURCE = 'ace1386709499685df70d4467574c36b02cb5335'
-          OLD_RUN = 38188949885
-          OLD_MANIFEST = '76ff23344eb3e9479046b020b6985961a14055fc16544ea71bb400ba5bca2326'
-          WORKER = "import json, sys\nfrom pathlib import Path\nfrom crypto_boom import okx_cache as old\nfrom crypto_boom.okx_storage import Scope\np = json.load(sys.stdin)\nstate, files, total = old._validated_bundle(Path(p['bundle']), scope=Scope(**p['scope']),\n    source_sha=p['source_sha'], run_id=p['run_id'], manifest_sha256=p['manifest_sha256'], now=p['now'])\nif not state.notifications_enabled or any(v['status'] != 'confirmed' for v in state.ledger.values()):\n    raise ValueError('handoff_requires_armed_resolved_predecessor')\nprint(json.dumps({'files': files, 'total': total, 'ledger_digest': old.digest(old._json(state.ledger)),\n    'ledger_entries': len(state.ledger), 'generation': state.generation, 'at': state.at,\n    'cursor': state.cursor, 'tracker_digest': old.digest(old._json(state.encode()['last_at'])),\n    'active_digest': old.digest(old._json(state.encode()['active']))}, sort_keys=True))\n"
-          ROOT = Path(os.environ['RUNNER_TEMP']) / 'okx-live'
-          LEGACY = Path('.migration-source').resolve()
-
-          def legacy_validation(bundle, *, scope, source_sha, run_id, manifest_sha256, now):
-              if (source_sha, run_id, manifest_sha256) != (OLD_SOURCE, OLD_RUN, OLD_MANIFEST):
-                  raise ValueError('handoff_exact_external_predecessor_required')
-              request = dict(bundle=str(bundle.resolve()), scope=asdict(scope), source_sha=source_sha,
-                             run_id=run_id, manifest_sha256=manifest_sha256, now=now)
-              environment = dict(os.environ, PYTHONPATH=str(LEGACY / 'src'))
-              child = subprocess.run([sys.executable, '-c', WORKER], input=json.dumps(request),
-                                     env=environment, capture_output=True, text=True, timeout=30, check=True)
-              receipt = json.loads(child.stdout)
-              raw = cache._read(bundle / 'checkpoint.json', 8 * 1024 * 1024)
-              if cache.digest(raw) != receipt['files']['checkpoint.json']['sha256']:
-                  raise ValueError('handoff_checkpoint_changed')
-              state, reason = StateStore(bundle / 'checkpoint.json').load()
-              if (state is None or reason != 'state_hit' or not state.notifications_enabled
-                      or any(v['status'] != 'confirmed' for v in state.ledger.values())
-                      or (state.generation, state.at, state.cursor) != (receipt['generation'], receipt['at'], receipt['cursor'])
-                      or cache.digest(cache._json(state.ledger)) != receipt['ledger_digest']
-                      or cache.digest(cache._json(state.encode()['last_at'])) != receipt['tracker_digest']
-                      or cache.digest(cache._json(state.encode()['active'])) != receipt['active_digest']):
-                  raise ValueError('handoff_new_schema_or_state_mismatch')
-              (ROOT / 'migration-receipt.json').write_bytes(cache._json(receipt))
-              return state, receipt['files'], receipt['total']
-
-          if __name__ == '__main__':
-              if os.environ.get('MODE') != 'preview' or os.environ.get('REBUILD') != 'false':
-                  raise ValueError('handoff_nonnotifying_preview_only')
-              original = cache._validated_bundle
-              cache._validated_bundle = legacy_validation
-              try:
-                  sys.argv = ['handoff', 'prepare', '--root', str(ROOT)]
-                  live.main()
-              finally:
-                  cache._validated_bundle = original
-              receipt = json.loads((ROOT / 'migration-receipt.json').read_bytes())
-              state, reason = StateStore(ROOT / 'transfer/checkpoint.json').load()
-              if (state is None or reason != 'state_hit' or state.notifications_enabled
-                      or cache.digest(cache._json(state.ledger)) != receipt['ledger_digest']
-                      or len(state.ledger) != receipt['ledger_entries']):
-                  raise ValueError('handoff_ledger_not_preserved')
-              print('OKX_MIGRATION_V1 ' + json.dumps({k: receipt[k] for k in
-                  ('ledger_digest', 'ledger_entries', 'generation', 'at', 'cursor')}, sort_keys=True))
-          PY
-            python "$WORKROOT/handoff.py"
-          fi
+          python -m crypto_boom.live prepare --root "$WORKROOT"
       - name: Check free headroom before save
         if: steps.scan.outputs.persist == 'true'
         env:
