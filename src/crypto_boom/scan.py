@@ -3,11 +3,13 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
 from dataclasses import asdict
+from datetime import datetime, timezone
 from pathlib import Path
 from types import MappingProxyType
 
@@ -332,27 +334,65 @@ def scan(products: list[Product], at: int, cache: ProductCache, state: Checkpoin
             "http": budget.observations, "publication": "disabled"}
 
 
-def main():
+def preview_text(report):
+    """Plain-text diagnostics, not a publication receipt or a send ledger."""
+    def utc(at):
+        return datetime.fromtimestamp(at / 1000, timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')
+    lines = [
+        'LOCAL PREVIEW — 不发送通知、不修改通知账本',
+        f"数据截止：{utc(report['at'])}",
+        f"标的：{report['pool']} / {report['metadata_eligible']}；截断：{report['coverage_capped']}",
+        '覆盖：' + ' '.join(f'{key}={report[key]}' for key in
+                           ('complete', 'already_evaluated', 'partial', 'warmup', 'deferred')),
+        f"检查点 generation={report['checkpoint_generation']}；HTTP={report['http_attempts']}；重试={report['http_retries']}",
+        '按条件变化时间排序；UP/DOWN 不是买卖建议。没有变化不等于没有数据缺口。',
+        '这不是待发送队列；再次扫描同一截止时间不会重复产生条件变化。',
+        '', '本轮条件变化：',
+    ]
+    for change in sorted(report['transitions'], key=lambda v: (v['at'], v['identity'], v['stage'])):
+        rule, product, direction, first = change['identity']
+        # JSON string quoting keeps source-provided controls on one plain-text line.
+        lines.append('\t'.join((utc(change['at']), json.dumps(product, ensure_ascii=False),
+                                direction, change['stage'], rule, '首次=' + utc(first))))
+    if not report['transitions']:
+        lines.append('无新增条件变化。覆盖缺口和逐标的原因请查看 scan-report.json。')
+    return ('\n'.join(lines) + '\n').encode('utf-8')
+
+
+def main(argv=None, *, cancel=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--workspace", type=Path, required=True, help="Local task-owned cache/state directory")
-    parser.add_argument("--limit", type=int, default=8, help="Explicit coverage cap, not production full-pool acceptance")
+    parser.add_argument("--limit", type=int, default=1000, help="Coverage cap (default 1000); truncation is reported, not full-pool acceptance")
     parser.add_argument("--workers", type=int, choices=(4, 8), default=4)
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     if not 1 <= args.limit <= 1000:
         parser.error("limit must be 1..1000")
+    display_workspace = args.workspace
+    args.workspace = args.workspace.absolute()
+    for path in (args.workspace, *(args.workspace / name for name in
+                 ('checkpoint.json', 'checkpoint.json.lock', 'market', 'scan-report.json', 'preview.txt'))):
+        if path.is_symlink() or path.is_junction():
+            raise Unavailable('local_workspace_link: use a dedicated regular directory')
     from .runtime import supervise
+    started = time.monotonic()
     store = StateStore(args.workspace / "checkpoint.json")
     with store.writer():
         state, state_reason = store.load()
-        if state is None and store.path.exists():
+        if state is None and (os.path.lexists(store.path) or any((args.workspace / name).exists()
+                              for name in ('market', 'scan-report.json', 'preview.txt'))):
             raise Unavailable(state_reason + ": manual diagnosis required, no overwrite")
         if state is not None and state.notifications_enabled:
             raise Unavailable("shadow_workspace_required: do not consume production delivery state")
-        expected = None if state is None else state.generation
+        if state is None:
+            # Establish a non-notifying recovery point before a cold scan can be interrupted.
+            state = Checkpoint()
+            store.save(state, None)
+        expected = state.generation
+        ledger = state.ledger
         token = store.writer_token
         deadline = time.monotonic() + 480
         exitcode = supervise(scan_job, (args.workspace, args.limit, args.workers, token, expected, deadline),
-                             seconds=480, grace=5, lock_owner=store)
+                             seconds=480, grace=5, lock_owner=store, **({'cancel': cancel} if cancel else {}))
         if exitcode != 0:
             raise Unavailable("shadow_child_failed:" + str(exitcode))
         with args.workspace.joinpath("scan-report.json").open("rb") as stream:
@@ -362,7 +402,23 @@ def main():
         report = json.loads(raw)
         if report.get("run_token") != token:
             raise Unavailable("stale_shadow_report")
-        print(json.dumps({k: v for k, v in report.items() if k not in ("products", "transitions", "http", "run_token")}))
+        saved, reason = store.load()
+        if (saved is None or saved.generation != (expected or 0) + 1
+                or report.get('checkpoint_generation') != saved.generation or report['at'] != saved.at
+                or saved.notifications_enabled or report.get('publication') != 'disabled'):
+            raise Unavailable('shadow_checkpoint_mismatch:' + reason)
+        if saved.ledger != ledger:
+            raise Unavailable('shadow_ledger_changed: manual diagnosis required')
+        preview = preview_text(report)
+        if len(preview) > 16 * 1024 * 1024:
+            raise Unavailable('preview_byte_limit')
+        atomic_write(args.workspace / 'preview.txt', preview)
+        summary = {k: v for k, v in report.items() if k not in ("products", "transitions", "http", "run_token")}
+        summary.update(elapsed_seconds=round(time.monotonic() - started, 3),
+                       ledger_entries=len(saved.ledger), ledger_preserved=True,
+                       report_path=str(display_workspace / 'scan-report.json'),
+                       preview_path=str(display_workspace / 'preview.txt'))
+        print(json.dumps(summary, sort_keys=True, allow_nan=False))
 
 
 def scan_job(workspace, limit, workers, token, expected, deadline, notification_mode='shadow', baseline_digest=''):
@@ -408,7 +464,8 @@ def scan_job(workspace, limit, workers, token, expected, deadline, notification_
             expected = state.generation
         report = scan(products[:limit], at, ProductCache(workspace / "market"), state, budget, workers=workers)
         report.update({"metadata_eligible": len(products), "excluded_metadata": excluded,
-                       "coverage_capped": len(products) > limit, "state": state_reason, "run_token": token})
+                       "coverage_capped": len(products) > limit, "state": state_reason, "run_token": token,
+                       "checkpoint_generation": state.generation + 1})
         raw = json.dumps(report, separators=(",", ":"), allow_nan=False).encode()
         if len(raw) > 16 * 1024 * 1024:
             raise Unavailable("report_byte_limit")

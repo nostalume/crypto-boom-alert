@@ -55,9 +55,9 @@ gh run view RUN_ID --repo nostalume/crypto-boom-alert --log
 `partial/deferred/warmup` 不能解释为没有异常，`complete` 也不是邮件到达证明。
 `OKX_TRANSITION_V1` 按事件 identity+stage 核对变化，ENDED 不发告警。
 
-离线检查：`uv sync --locked`，设置 `PYTHONPATH=src`，
-运行 `uv run --locked --no-sync python -m pytest -q -p no:cacheprovider`、
-`uv run --locked --no-sync python -m ruff check --no-cache --select F,I,RUF100 src tests`。
+本地入口及定时/取消/重启恢复见 [README](../README.md#本地运行一个入口)。
+检查：`uv run --locked pytest -q -p no:cacheprovider`、
+`uv run --locked ruff check --no-cache --select F,I,RUF100 alert.py src tests`；无需手动设置导入路径。
 生产用 `uv sync --locked --no-dev`，不会安装 dev 组；`uv.lock` 是唯一完整依赖锁。
 依赖升级须显式执行 `uv lock --upgrade-package NAME` 并检查 diff、测试后再提交。
 CI 只执行离线检查，不扫描市场、不发布、不保存 cache/artifact。

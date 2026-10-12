@@ -192,6 +192,9 @@ def test_catchup_cap_reports_omitted_history(tmp_path):
 
 def test_shadow_cli_rejects_previous_run_report(tmp_path, monkeypatch):
     from crypto_boom import scan as scanner
+    store = state.StateStore(tmp_path / 'checkpoint.json')
+    with store.writer():
+        store.save(state.Checkpoint(), None)
     (tmp_path / 'scan-report.json').write_text('{"run_token":"previous"}')
     monkeypatch.setattr('sys.argv', ['scan', '--workspace', str(tmp_path)])
     monkeypatch.setattr(runtime, 'supervise', lambda *args, **kwargs: 0)
@@ -321,3 +324,30 @@ def test_oversized_cache_replacement_does_not_read_old_body(tmp_path, monkeypatc
         cache.save(data.Snapshot(PRODUCT, T, series))
     assert cache.load(PRODUCT, T)[1] == 'cache_hit'
     assert path.stat().st_size <= 1024 * 1024
+
+
+def test_cancel_blocked_http_reaps_owned_child_and_releases_writer(tmp_path):
+    store = state.StateStore(tmp_path / 'state.json')
+    marker = tmp_path / 'entered'
+    started = time.monotonic()
+    with store.writer():
+        with pytest.raises(runtime.Cancelled):
+            runtime.supervise(_blocking_http, (marker,), seconds=5, grace=1,
+                              lock_owner=store, cancel=marker.exists)
+        assert store.lock_path.exists() and not store.retain_lock
+    assert marker.exists() and not store.lock_path.exists()
+    assert time.monotonic() - started < 5
+
+
+@pytest.mark.parametrize('mode,generation', [('before_replace', 1), ('after_replace', 2)])
+def test_cancel_during_commit_keeps_old_or_new_complete_checkpoint(tmp_path, mode, generation):
+    store = state.StateStore(tmp_path / 'state.json')
+    marker = tmp_path / 'entered'
+    with store.writer():
+        store.save(state.Checkpoint(), None)
+        with pytest.raises(runtime.Cancelled):
+            runtime.supervise(_commit_job, (store.path, store.writer_token, marker, mode),
+                              seconds=5, grace=1, lock_owner=store, cancel=marker.exists)
+        saved, reason = store.load()
+        assert reason == 'state_hit' and saved.generation == generation and saved.ledger == {}
+    assert not store.lock_path.exists()

@@ -20,7 +20,11 @@ class UnreapedChild(Unavailable):
     pass
 
 
-def supervise(target, args=(), *, seconds=480, grace=5, lock_owner=None):
+class Cancelled(Unavailable):
+    pass
+
+
+def supervise(target, args=(), *, seconds=480, grace=5, lock_owner=None, cancel=None):
     """Terminate before the outer deadline; release a lock only after reaping.
 
     Native process creation/OS/filesystem failures are outside a strict wall-time
@@ -36,7 +40,16 @@ def supervise(target, args=(), *, seconds=480, grace=5, lock_owner=None):
         lock_owner.retain_lock = True
     try:
         process.start()
-        process.join(max(0, deadline - grace - time.monotonic()))
+        if cancel is None:
+            process.join(max(0, deadline - grace - time.monotonic()))
+        else:
+            while process.is_alive():
+                if cancel():
+                    raise Cancelled('preview_cancelled: reload checkpoint; commit outcome may be old or new')
+                remaining = deadline - grace - time.monotonic()
+                if remaining <= 0:
+                    break
+                process.join(min(.25, remaining))
         if process.is_alive():
             raise DeadlineExceeded("job_deadline: reload checkpoint; commit outcome may be old or new")
         return process.exitcode

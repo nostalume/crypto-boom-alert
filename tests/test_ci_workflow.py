@@ -47,7 +47,7 @@ def test_operations_guide_describes_direct_start_and_fail_closed_recovery():
     for phrase in ('不要求 24 小时观察', '未知发布', '盲目重发', '先停新 writer',
                    '不等于邮件已经送达', '0 停用预算', '先暂停 workflow'):
         assert phrase in raw
-    assert 'PYTHONPATH=src' in raw
+    assert 'uv run --locked pytest' in raw and '无需手动设置导入路径' in raw
     candidate = yaml.safe_load((ROOT / '.github/workflows/okx-live.yml').read_text(encoding='utf-8'))
     assert set(candidate['on']) == {'workflow_dispatch', 'schedule'}
     assert all(key in raw for key in ('preview', 'live', 'rebuild', 'arm_manifest',

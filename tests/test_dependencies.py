@@ -42,8 +42,8 @@ def test_production_installs_runtime_only_and_executes_synced_project_python():
 def test_local_instructions_do_not_keep_a_parallel_requirements_authority():
     for path in (ROOT / 'README.md', ROOT / 'docs/okx-operations.md'):
         text = path.read_text(encoding='utf-8')
-        assert 'uv sync --locked' in text
-        assert 'uv run --locked --no-sync python -m pytest' in text
+        assert 'uv run --locked pytest' in text
+        assert 'PYTHONPATH=src' not in text
         assert 'requirements.txt' not in text
     assert '.venv/' in (ROOT / '.gitignore').read_text(encoding='utf-8').splitlines()
 

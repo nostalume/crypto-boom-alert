@@ -439,7 +439,9 @@ def test_actual_cli_select_and_admit_across_processes_use_independent_jobs(fixtu
     seed()
     for phase in ('select', 'admit'):
         proc = subprocess.run([sys.executable, '-B', '-m', 'crypto_boom.live', phase, '--root', str(root)],
-                              env={**os.environ, 'PYTHONDONTWRITEBYTECODE': '1'}, capture_output=True, text=True, timeout=30)
+                              env={**os.environ, 'PYTHONDONTWRITEBYTECODE': '1',
+                                   'PYTHONPATH': str(Path(__file__).resolve().parents[1] / 'src')},
+                              capture_output=True, text=True, timeout=30)
         assert proc.returncode == 0, proc.stderr
     assert read(root, 'selection.json')['proof']['at'] == T
 
